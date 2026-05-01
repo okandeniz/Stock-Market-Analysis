@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stock Market Analysis</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">SMA</div>
+        <div>
+          <div class="title">Stock Market Analysis</div>
+          <div class="subtitle">Sektör + Şirket analizlerini web'de çalıştır</div>
+        </div>
+      </div>
+      <div class="hint">
+        Not: Şirket analizi için EVDS API Key gerekli (formdan girilebilir).
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- Ana sekme -->
+      <div class="main-tabs">
+        <button class="main-tab active" data-tab="sector">Sektör Analizi</button>
+        <button class="main-tab" data-tab="company">Şirket Analizi</button>
+      </div>
+
+      <!-- =================== SEKTÖR PANELİ =================== -->
+      <section id="tab-sector" class="panel active">
+        <div class="card">
+          <h2>Seçimler</h2>
+          <div class="grid">
+            <label>
+              <span>Sektör</span>
+              <select id="sector-sektor"></select>
+            </label>
+            <label>
+              <span>Analiz Türü</span>
+              <select id="sector-analiz-turu"></select>
+            </label>
+            <label>
+              <span>Excel Kaydı</span>
+              <select id="sector-excel"></select>
+            </label>
+          </div>
+          <div class="actions">
+            <button id="run-sector" class="primary">Analizi Başlat</button>
+            <div id="sector-status" class="status"></div>
+          </div>
+        </div>
+
+        <!-- Görünüm seçici -->
+        <div id="sector-toolbar" class="result-toolbar hidden">
+          <div class="pill-group">
+            <button class="pill active" id="sector-mode-table" data-mode="table">Tablo</button>
+            <button class="pill" id="sector-mode-image" data-mode="image">Görseller</button>
+          </div>
+          <!-- Görsel alt filtresi -->
+          <div class="pill-group" id="sector-img-filter-bar">
+            <button class="pill sm active" data-img-filter="all">Tümü</button>
+            <button class="pill sm" data-img-filter="bar">Bar Grafikler</button>
+            <button class="pill sm" data-img-filter="heatmap">Heatmap</button>
+          </div>
+        </div>
+
+        <div id="sector-content" class="result-content"></div>
+      </section>
+
+      <!-- =================== ŞİRKET PANELİ =================== -->
+      <section id="tab-company" class="panel">
+        <div class="card">
+          <h2>Seçimler</h2>
+          <div class="grid">
+            <label>
+              <span>Hisse (örn: THYAO)</span>
+              <input id="company-hisse" placeholder="THYAO" />
+            </label>
+            <label>
+              <span>İstatistiksel Değerleme</span>
+              <select id="company-degerleme"></select>
+            </label>
+            <label id="company-hazir-wrap" class="hidden">
+              <span>Hazır TUFE Tahmini Kullan</span>
+              <select id="company-hazir"></select>
+            </label>
+            <div class="evds-field-wrap">
+              <span class="evds-label">
+                EVDS API Key
+                <span id="evds-badge" class="evds-badge hidden">Zorunlu</span>
+                <span class="evds-opt-text" id="evds-opt-text">— opsiyonel</span>
+              </span>
+              <div class="input-pw-wrap">
+                <input id="company-evds" type="password" placeholder="ENV yoksa buraya girin" autocomplete="off" />
+                <label class="show-key-label">
+                  <input type="checkbox" id="show-evds-key" />
+                  Key Göster
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="run-company" class="primary">Analizi Başlat</button>
+            <div id="company-status" class="status"></div>
+          </div>
+        </div>
+
+        <!-- Şirket sonuç alanı: sidebar + içerik -->
+        <div id="company-results-area" class="company-layout hidden">
+          <!-- Sol Sidebar -->
+          <aside class="company-sidebar">
+            <!-- Tablo / Görsel toggle -->
+            <div class="sidebar-toggle">
+              <button class="pill active" id="company-mode-table" data-mode="table">Tablo</button>
+              <button class="pill" id="company-mode-image" data-mode="image">Görsel</button>
+            </div>
+            <!-- Kategori butonları -->
+            <div class="sidebar-section-label">Kategori</div>
+            <nav class="cat-nav">
+              <button class="cat-btn active" data-cat="büyüme">Büyüme</button>
+              <button class="cat-btn" data-cat="karlılık">Karlılık</button>
+              <button class="cat-btn" data-cat="bilanço">Bilanço</button>
+              <button class="cat-btn" data-cat="likidite">Likidite</button>
+              <button class="cat-btn" data-cat="verimlilik">Verimlilik</button>
+              <button class="cat-btn" data-cat="nakit">Nakit Akışı</button>
+              <button class="cat-btn" data-cat="değerleme">Değerleme</button>
+              <button class="cat-btn" data-cat="skor">Skor</button>
+            </nav>
+          </aside>
+
+          <!-- Ana içerik -->
+          <div id="company-content" class="company-content"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>FastAPI • HTML/CSS/JS • Notebook fonksiyonları</div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
