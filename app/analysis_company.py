@@ -99,7 +99,7 @@ def run_company_analysis(
         df_bilanco = mod.bilanco_cekme([hisse])
         gelir_tab_yil = mod.gelir_tablosu(df_bilanco, ceyrek=False, yillik=True)
         new_df = mod.bilanco_yillik(df_bilanco, gelir_tab_yil)
-        df = mod.oran_rasyo_hesaplama(new_df, hisse)
+        df = mod.oran_rasyo_hesaplama(new_df, hisse, df_bilanco)
 
         # API Key varsa EVDS'den TUFE çek ve df ile birleştir.
         has_tufe = False
