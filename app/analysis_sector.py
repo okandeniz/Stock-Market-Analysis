@@ -39,7 +39,10 @@ def _prepare_plot_df(sektor_df: pd.DataFrame) -> pd.DataFrame:
     ozel = {"SEKTÖR TOPLAM", "SEKTÖR Median"}
     df = sektor_df.loc[~sektor_df.index.isin(ozel)].copy()
     for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="ignore")
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except (ValueError, TypeError):
+            pass
     return df
 
 
