@@ -1,0 +1,1 @@
+"""Finansal Mercek regresyon testleri."""

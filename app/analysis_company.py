@@ -1,20 +1,367 @@
 from __future__ import annotations
 
-import os
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 
 from .notebook_runtime import NotebookRuntime, RenderedOutput
+from .plotly_theme import apply_theme, format_tr_number
+from .table_format import dataframe_to_html
+from .valuation import (
+    INSUFFICIENT_VALUATION_MESSAGE,
+    InsufficientValuationDataError,
+    ValuationResult,
+    build_rule_based_valuation,
+)
+
+
+def _valuation_kpi_summary(df: pd.DataFrame | None) -> dict[str, Any] | None:
+    """Return the decision-oriented forward valuation fields for KPI cards."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return None
+
+    row = df.iloc[-1]
+
+    def finite_value(column: str) -> float | None:
+        try:
+            value = float(row.get(column, np.nan))
+        except (TypeError, ValueError):
+            return None
+        return value if np.isfinite(value) else None
+
+    def first_finite(*columns: str) -> float | None:
+        for column in columns:
+            value = finite_value(column)
+            if value is not None:
+                return value
+        return None
+
+    status = row.get("Değerleme Görünümü", row.get("durum", "belirsiz"))
+    if pd.isna(status) or not str(status).strip():
+        status = "belirsiz"
+
+    period_value = df.index[-1]
+    if isinstance(period_value, (pd.Timestamp, pd.Period)):
+        period_label = f"{period_value.year}-{period_value.month:02d}"
+    else:
+        period_label = str(period_value)
+
+    return {
+        "period": period_label,
+        "horizon": str(row.get("Değerleme Ufku", "Yıl sonu değerlemesi")),
+        "current_price": first_finite("Güncel Fiyat", "fiyat"),
+        "average_target": first_finite("Ağırlıklı Hedef", "Ortalama Tahmin"),
+        "upside_pct": first_finite("Hedef Potansiyeli %", "iskonto_%"),
+        "scenario_low": finite_value("Temkinli Hedef"),
+        "scenario_high": finite_value("İyimser Hedef"),
+        "confidence": str(row.get("Veri Güveni", "—")),
+        "confidence_score": finite_value("Güven Puanı"),
+        "status": str(status),
+    }
+
+
+def _plot_rule_based_valuation(mod: Any, result: ValuationResult) -> None:
+    """Show method targets and the rule-based scenario band without model jargon."""
+    methods = result.methods.loc[result.methods["Güven Ağırlığı %"] > 0].copy()
+    summary = result.summary.iloc[-1]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=methods.index.tolist(),
+            y=methods["Baz Hedef"],
+            name="Yöntem Hedefi",
+            marker_color="#6DB432",
+            text=[format_tr_number(value, 2, " TL") for value in methods["Baz Hedef"]],
+            textposition="outside",
+            hovertemplate="%{x}<br>Hedef: %{y:,.2f} TL<extra></extra>",
+        )
+    )
+    fig.add_hrect(
+        y0=float(summary["Temkinli Hedef"]),
+        y1=float(summary["İyimser Hedef"]),
+        fillcolor="rgba(109,180,50,0.15)",
+        line_width=0,
+        annotation_text="Temkinli–İyimser senaryo aralığı",
+        annotation_position="top left",
+    )
+    fig.add_hline(
+        y=float(summary["Ağırlıklı Hedef"]),
+        line_color="#ff6b6b",
+        line_dash="dash",
+    )
+    fig.add_annotation(
+        x=0.99,
+        y=0.98,
+        xref="paper",
+        yref="paper",
+        xanchor="right",
+        yanchor="top",
+        text=f"Ağırlıklı hedef fiyat: {format_tr_number(summary['Ağırlıklı Hedef'], 2, ' TL')}",
+        showarrow=False,
+        bgcolor="rgba(31,31,33,0.82)",
+        bordercolor="#ff6b6b",
+        borderwidth=1,
+        borderpad=6,
+        font={"color": "#f2f2f2", "size": 12},
+    )
+    fig.update_yaxes(title_text="Hisse Fiyatı (TL)", rangemode="tozero")
+    apply_theme(
+        fig,
+        height=470,
+        title=f"İleri Değerleme — {summary['Değerleme Ufku']} | Güven: {summary['Veri Güveni']} {int(summary['Güven Puanı'])}/100",
+    )
+    # Kısa yöntem adları (F/K, PD/DD…) yatay daha okunaklı.
+    fig.update_xaxes(tickangle=0)
+    mod.show(fig)
+
+
+def _build_company_summary(
+    hisse: str,
+    raw_financials: pd.DataFrame,
+    ratios: pd.DataFrame,
+    quarterly_income: pd.DataFrame,
+) -> dict[str, Any] | None:
+    """Build the compact company dashboard.
+
+    Income rows use exact same-quarter YoY; balance-sheet rows use the prior
+    reporting period (QoQ) because stock levels are most useful sequentially.
+    """
+    if not isinstance(raw_financials, pd.DataFrame) or raw_financials.empty:
+        return None
+
+    raw = raw_financials.sort_index()
+    ratio_frame = ratios.sort_index() if isinstance(ratios, pd.DataFrame) else pd.DataFrame()
+    quarterly = (
+        quarterly_income.sort_index()
+        if isinstance(quarterly_income, pd.DataFrame)
+        else pd.DataFrame()
+    )
+    raw_periods = pd.to_datetime(raw.index, errors="coerce")
+    valid_positions = np.flatnonzero(~pd.isna(raw_periods))
+    if not len(valid_positions):
+        return None
+
+    latest_position = int(valid_positions[-1])
+    latest_period = pd.Timestamp(raw_periods[latest_position])
+    latest_index = raw.index[latest_position]
+    comparison_matches = [
+        int(position)
+        for position in valid_positions
+        if pd.Timestamp(raw_periods[position]).year == latest_period.year - 1
+        and pd.Timestamp(raw_periods[position]).month == latest_period.month
+    ]
+    comparison_position = comparison_matches[-1] if comparison_matches else None
+    comparison_index = raw.index[comparison_position] if comparison_position is not None else None
+    prior_period_position = (
+        int(valid_positions[-2]) if len(valid_positions) >= 2 else None
+    )
+    prior_period_index = (
+        raw.index[prior_period_position] if prior_period_position is not None else None
+    )
+    prior_period = (
+        pd.Timestamp(raw_periods[prior_period_position])
+        if prior_period_position is not None
+        else None
+    )
+
+    def period_label(value: Any) -> str:
+        period = pd.Timestamp(value)
+        return f"{period.year}/{period.month}"
+
+    def frame_row_for_period(frame: pd.DataFrame, period: pd.Timestamp) -> pd.Series | None:
+        if frame.empty:
+            return None
+        frame_periods = pd.to_datetime(frame.index, errors="coerce")
+        positions = [
+            position
+            for position, value in enumerate(frame_periods)
+            if pd.notna(value)
+            and pd.Timestamp(value).year == period.year
+            and pd.Timestamp(value).month == period.month
+        ]
+        return frame.iloc[positions[-1]] if positions else None
+
+    def finite_value(row: pd.Series | None, candidates: tuple[str, ...]) -> float | None:
+        if row is None:
+            return None
+        for column in candidates:
+            if column not in row.index:
+                continue
+            try:
+                value = float(row[column])
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value):
+                return value
+        return None
+
+    latest_raw = raw.loc[latest_index]
+    yoy_raw = raw.loc[comparison_index] if comparison_index is not None else None
+    prior_raw = raw.loc[prior_period_index] if prior_period_index is not None else None
+    latest_ratio = frame_row_for_period(ratio_frame, latest_period)
+    yoy_ratio = (
+        frame_row_for_period(
+            ratio_frame,
+            pd.Timestamp(year=latest_period.year - 1, month=latest_period.month, day=1),
+        )
+        if comparison_index is not None
+        else None
+    )
+    prior_ratio = (
+        frame_row_for_period(ratio_frame, prior_period) if prior_period is not None else None
+    )
+
+    def comparison_row(
+        label: str,
+        candidates: tuple[str, ...],
+        *,
+        previous_raw_row: pd.Series | None,
+        previous_ratio_row: pd.Series | None,
+        source: str = "raw",
+        inverse: bool = False,
+    ) -> dict[str, Any] | None:
+        current_source = latest_ratio if source == "ratio" else latest_raw
+        previous_source = previous_ratio_row if source == "ratio" else previous_raw_row
+        current = finite_value(current_source, candidates)
+        previous = finite_value(previous_source, candidates)
+        if current is None and previous is None:
+            return None
+        change_pct = None
+        if current is not None and previous not in (None, 0):
+            if inverse:
+                # Net borç = finansal borç - nakit. Bu nedenle negatif değer
+                # nakit fazlasıdır ve daha negatife gitmek iyileşmedir. İşareti
+                # koruyan değişim: -13 -> -23 = -%75 (yeşil), 40 -> 50 =
+                # +%25 (kırmızı). Renk ters yönlü gösterge kuralıyla belirlenir.
+                change_pct = (current - previous) / abs(previous) * 100
+            # Net borç dışındaki kalemlerde negatif bir tabandan pozitife
+            # geçişte klasik yüzde değişim yanıltıcıdır (örn. zarar -> kâr).
+            elif previous < 0 < current:
+                change_pct = None
+            else:
+                change_pct = (current / previous - 1) * 100
+        return {
+            "label": label,
+            "current": current,
+            "previous": previous,
+            "change_pct": change_pct if change_pct is None or np.isfinite(change_pct) else None,
+            "inverse": inverse,
+        }
+
+    income_specs = [
+        ("Satışlar", ("Satış Gelirleri",)),
+        ("Brüt Kâr", ("BRÜT KAR (ZARAR)",)),
+        ("FAVÖK", ("FAVÖK",)),
+        (
+            "Net Parasal Pozisyon Kazancı/(Kaybı)",
+            (
+                "Net Parasal Pozisyon Kazançları (Kayıpları)",
+                "Net Parasal Pozisyon Kazancı (Kaybı)",
+                "Net Parasal Pozisyon Kazanç/Kayıpları",
+            ),
+        ),
+        ("Net Dönem Kârı", ("Ana Ortaklık Payları", "DÖNEM KARI (ZARARI)")),
+    ]
+    balance_specs = [
+        ("Dönen Varlıklar", ("Dönen Varlıklar",), "raw", False),
+        ("Duran Varlıklar", ("Duran Varlıklar",), "raw", False),
+        ("Toplam Varlıklar", ("TOPLAM VARLIKLAR",), "raw", False),
+        ("Net Borç", ("net_borc",), "ratio", True),
+        (
+            "Özkaynaklar",
+            ("Özkaynaklar", "  Ana Ortaklığa Ait Özkaynaklar"),
+            "raw",
+            False,
+        ),
+    ]
+    income_rows = [
+        row
+        for label, candidates in income_specs
+        if (
+            row := comparison_row(
+                label,
+                candidates,
+                previous_raw_row=yoy_raw,
+                previous_ratio_row=yoy_ratio,
+            )
+        )
+        is not None
+    ]
+    balance_rows = [
+        row
+        for label, candidates, source, inverse in balance_specs
+        if (
+            row := comparison_row(
+                label,
+                candidates,
+                previous_raw_row=prior_raw,
+                previous_ratio_row=prior_ratio,
+                source=source,
+                inverse=inverse,
+            )
+        )
+        is not None
+    ]
+
+    quarterly_points: list[dict[str, Any]] = []
+    for index, row in quarterly.tail(5).iterrows():
+        quarterly_points.append(
+            {
+                "period": period_label(index),
+                "sales": finite_value(row, ("Satış Gelirleri",)),
+                "ebitda": finite_value(row, ("FAVÖK",)),
+                "net_income": finite_value(
+                    row,
+                    ("Ana Ortaklık Payları", "DÖNEM KARI (ZARARI)"),
+                ),
+            }
+        )
+
+    price_points: list[dict[str, Any]] = []
+    price_column = next(
+        (column for column in ("duzeltilmis_fiyat", "fiyat") if column in ratio_frame.columns),
+        None,
+    )
+    if price_column:
+        for index, value in pd.to_numeric(
+            ratio_frame[price_column], errors="coerce"
+        ).dropna().tail(12).items():
+            price_points.append({"period": period_label(index), "price": float(value)})
+
+    return {
+        "symbol": str(hisse).upper(),
+        "latest_period": period_label(latest_period),
+        "comparison_period": (
+            period_label(comparison_index) if comparison_index is not None else None
+        ),
+        "comparison_available": comparison_index is not None,
+        "balance_comparison_period": (
+            period_label(prior_period_index) if prior_period_index is not None else None
+        ),
+        "balance_comparison_available": prior_period_index is not None,
+        "kpis": {
+            "price": finite_value(latest_ratio, ("duzeltilmis_fiyat", "fiyat")),
+            "market_cap": finite_value(latest_ratio, ("PD",)),
+            "pe": finite_value(latest_ratio, ("F/K",)),
+            "pb": finite_value(latest_ratio, ("PD/DD",)),
+            "ev_ebitda": finite_value(latest_ratio, ("FD/FAVÖK",)),
+        },
+        "income_rows": income_rows,
+        "balance_rows": balance_rows,
+        "quarterly": quarterly_points,
+        "price_history": price_points,
+    }
 
 
 def _to_html(obj: Any) -> str:
     """DataFrame veya dict'i HTML tablosuna dönüştürür."""
     if isinstance(obj, pd.DataFrame):
-        return obj.to_html(index=False, border=0, classes="data-table")
-    return pd.DataFrame([obj]).to_html(index=False, border=0, classes="data-table")
+        return dataframe_to_html(obj, index=False)
+    return dataframe_to_html(pd.DataFrame([obj]), index=False)
 
 
 def _score_summary_html(total_score: Any, signal: str) -> str:
@@ -26,7 +373,11 @@ def _score_summary_html(total_score: Any, signal: str) -> str:
         "Zayıf":     "#ff8c42",
         "Çok Zayıf": "#ff6b6b",
     }
-    score_text = f"{total_score:.2f} / 100" if isinstance(total_score, (int, float)) else "—"
+    score_text = (
+        f"{format_tr_number(total_score, 2)} / 100"
+        if isinstance(total_score, (int, float)) and not pd.isna(total_score)
+        else "—"
+    )
     color = signal_colors.get(signal, "#7B7B7D")
     return (
         '<table border="0" class="data-table">'
@@ -42,10 +393,43 @@ def _score_summary_html(total_score: Any, signal: str) -> str:
     )
 
 
+def _piotroski_summary_html(score: Any, max_score: Any, eksik_kriter: Any) -> str:
+    """Piotroski F-Skoru özeti için renkli HTML tablo üretir."""
+    if not isinstance(score, (int, float)) or pd.isna(score):
+        score_text = "—"
+        color = "#7B7B7D"
+        note = "Hesaplanamadı (en az 5 dönemlik veri gerekli)"
+    else:
+        score_text = f"{int(score)} / {int(max_score)}"
+        ratio = score / max_score if max_score else 0
+        if ratio >= 0.75:
+            color = "#6DB432"
+        elif ratio >= 0.5:
+            color = "#f0c040"
+        else:
+            color = "#ff6b6b"
+        note = (
+            f"{int(eksik_kriter)} kriter veri yetersizliğinden hesaplanamadı"
+            if eksik_kriter
+            else "9 kriterin tamamı hesaplandı"
+        )
+    return (
+        '<table border="0" class="data-table">'
+        "<thead><tr>"
+        '<th style="text-align:left">Piotroski F-Skoru</th>'
+        '<th style="text-align:left">Not</th>'
+        "</tr></thead>"
+        "<tbody><tr>"
+        f'<td style="text-align:left;font-size:20px;font-weight:700;color:{color}">{score_text}</td>'
+        f'<td style="text-align:left;font-size:13px;color:#9a9a9a">{note}</td>'
+        "</tr></tbody>"
+        "</table>"
+    )
+
+
 def company_options() -> dict[str, Any]:
     return {
         "degerleme": ["EVET", "HAYIR"],
-        "hazir_tahmin": ["EVET", "HAYIR"],
     }
 
 
@@ -55,21 +439,28 @@ def run_company_analysis(
     outputs_dir: Path,
     hisse: str,
     degerleme: str,
-    hazir_tahmin: str | None,
-    evds_api_key: str | None,
 ) -> RenderedOutput:
+    total_started = time.perf_counter()
+
     nb_path = project_root / "Sirket Analiz.ipynb"
     rt = NotebookRuntime(nb_path, project_root=project_root, outputs_dir=outputs_dir)
+    module_started = time.perf_counter()
     mod = rt.module()
+    module_seconds = time.perf_counter() - module_started
 
     required = [
         "bilanco_cekme",
         "gelir_tablosu",
         "bilanco_yillik",
         "oran_rasyo_hesaplama",
-        "TUFE_alma",
         "donemlik_fark",
         "waterfall_subplots_readable",
+        "GELIR_KALEMLERI",
+        "SELALE_KALEMLERI",
+        "trend_endeks_analizi",
+        "trend_endeks_plot",
+        "ceyreklik_gelir_analizi",
+        "ceyreklik_gelir_plot",
         "degisim_plot",
         "karlılık_plot",
         "denge_plot",
@@ -78,40 +469,116 @@ def run_company_analysis(
         "plot_nakit_akimi",
         "plot_degerleme_dashboard",
         "financial_scorecard",
+        "piotroski_f_skoru",
+        "dupont_analizi_donemsel",
+        "dupont_plot",
     ]
     for fn in required:
         if not hasattr(mod, fn):
             raise RuntimeError(f"Notebook içinde `{fn}` fonksiyonu bulunamadı.")
 
-    api_key = (evds_api_key or os.getenv("EVDS_API_KEY") or "").strip()
-
-    # EVDS API Key yalnızca TUFE istatistiksel olarak tahmin edilecekse zorunludur.
-    # Diğer tüm senaryolarda opsiyoneldir.
-    tufe_needs_evds = degerleme == "EVET" and hazir_tahmin == "HAYIR"
-    if tufe_needs_evds and not api_key:
-        raise RuntimeError(
-            "TUFE istatistiksel tahmini için EVDS API Key gerekli. "
-            "UI'dan girin veya ortam değişkeni `EVDS_API_KEY` ayarlayın."
-        )
-
-    cleanup, snapshot = rt.with_matplotlib_saver(request_id="company", prefix="sirket")
+    cleanup, snapshot = rt.with_plotly_saver(request_id="company", prefix="sirket")
     try:
+        financial_data_started = time.perf_counter()
         df_bilanco = mod.bilanco_cekme([hisse])
         gelir_tab_yil = mod.gelir_tablosu(df_bilanco, ceyrek=False, yillik=True)
         new_df = mod.bilanco_yillik(df_bilanco, gelir_tab_yil)
         df = mod.oran_rasyo_hesaplama(new_df, hisse, df_bilanco)
+        financial_data_seconds = time.perf_counter() - financial_data_started
 
-        # API Key varsa EVDS'den TUFE çek ve df ile birleştir.
-        has_tufe = False
-        if api_key:
-            makro_data = mod.TUFE_alma(df, api_key)
-            df = df.merge(makro_data, how="inner", left_index=True, right_index=True)
-            base_tufe = df["TUFE"].iloc[0]
-            df["Satış Gelirleri_reel"] = df["Satış Gelirleri"] * (base_tufe / df["TUFE"])
-            has_tufe = True
+        chart_metric_started = time.perf_counter()
+        df_fark = mod.donemlik_fark(df)
+        income_columns = [
+            column for column in mod.GELIR_KALEMLERI if column in df_fark.columns
+        ]
+        annualized_income_changes = df_fark.loc[:, income_columns]
+        df_ceyreklik_gelir = mod.ceyreklik_gelir_analizi(df_bilanco)
+        periodic_income_changes = (
+            df_ceyreklik_gelir.loc[:, income_columns]
+            .apply(pd.to_numeric, errors="coerce")
+            .diff()
+            .dropna(how="all")
+        )
+        raw_cumulative_income_levels = df_bilanco.loc[:, income_columns]
+        raw_cumulative_income_levels = raw_cumulative_income_levels.loc[
+            :, ~raw_cumulative_income_levels.columns.duplicated()
+        ]
+        raw_cumulative_income_changes = (
+            raw_cumulative_income_levels
+            .apply(pd.to_numeric, errors="coerce")
+            .diff()
+            .dropna(how="all")
+        )
+        balance_columns = [
+            column
+            for column in mod.SELALE_KALEMLERI
+            if column not in mod.GELIR_KALEMLERI and column in df_bilanco.columns
+        ]
+        balance_levels = df_bilanco.loc[:, balance_columns]
+        balance_levels = balance_levels.loc[:, ~balance_levels.columns.duplicated()]
+        balance_changes = (
+            balance_levels.apply(pd.to_numeric, errors="coerce").diff().dropna(how="all")
+        )
 
-        df_fark = mod.donemlik_fark(df_bilanco)
-        mod.waterfall_subplots_readable(df_fark)
+        mod.waterfall_subplots_readable(
+            annualized_income_changes,
+            title="Gelir Tablosu Değişim Analizi — Yıllıklandırılmış",
+        )
+        snapshot(
+            "büyüme",
+            {
+                "analysis_section": "income_statement_changes",
+                "analysis_section_title": "Gelir Tablosu Kalemleri",
+                "chart_toggle_group": "income_statement_change_period",
+                "chart_toggle_label": "Yıllıklandırılmış",
+                "chart_toggle_order": 1,
+            },
+        )
+        mod.waterfall_subplots_readable(
+            periodic_income_changes,
+            title="Gelir Tablosu Değişim Analizi — Dönemsel",
+        )
+        snapshot(
+            "büyüme",
+            {
+                "analysis_section": "income_statement_changes",
+                "analysis_section_title": "Gelir Tablosu Kalemleri",
+                "chart_toggle_group": "income_statement_change_period",
+                "chart_toggle_label": "Dönemsel",
+                "chart_toggle_order": 2,
+            },
+        )
+        mod.waterfall_subplots_readable(
+            raw_cumulative_income_changes,
+            title="Gelir Tablosu Değişim Analizi — Açıklanan Ham 3-6-9-12 Aylık",
+        )
+        snapshot(
+            "büyüme",
+            {
+                "analysis_section": "income_statement_changes",
+                "analysis_section_title": "Gelir Tablosu Kalemleri",
+                "chart_toggle_group": "income_statement_change_period",
+                "chart_toggle_label": "Açıklanan Kümülatif",
+                "chart_toggle_order": 3,
+            },
+        )
+        mod.waterfall_subplots_readable(
+            balance_changes,
+            title="Bilanço Kalemleri Değişim Analizi",
+        )
+        snapshot(
+            "büyüme",
+            {
+                "analysis_section": "balance_sheet_changes",
+                "analysis_section_title": "Bilanço Kalemleri",
+            },
+        )
+
+        df_trend_endeks = mod.trend_endeks_analizi(df)
+        mod.trend_endeks_plot(df_trend_endeks)
+        snapshot("büyüme")
+
+        mod.ceyreklik_gelir_plot(df_ceyreklik_gelir)
         snapshot("büyüme")
 
         degisimler_cols = [
@@ -146,10 +613,17 @@ def run_company_analysis(
             "net_kar_marjı_%",
             "aktif_karliligi_%",
             "ozkaynak_karliligi_%",
+            "ihracat_oranı_%",
         ]
-        df_karlilik = df[[c for c in karlilik_cols if c in df.columns]]
+        df_karlilik = df[[c for c in karlilik_cols if c in df.columns]].rename(
+            columns={"ihracat_oranı_%": "İhracat Oranı (%)"}
+        )
         mod.karlılık_plot(df_karlilik)
         snapshot("karlılık")
+
+        dupont_df = mod.dupont_analizi_donemsel(df)
+        mod.dupont_plot(dupont_df)
+        snapshot("dupont")
 
         denge_cols = [
             "Dönen Varlıklar",
@@ -172,8 +646,11 @@ def run_company_analysis(
             "nakit_oranı",
             "net_borc",
             "net_borc/FAVOK",
+            "faiz_karsilama",
         ]
-        df_likitide = df[[c for c in likitide_cols if c in df.columns]]
+        df_likitide = df[[c for c in likitide_cols if c in df.columns]].rename(
+            columns={"faiz_karsilama": "Faiz Karşılama Oranı"}
+        )
         mod.liktide_plot(df_likitide)
         snapshot("likidite")
 
@@ -222,236 +699,89 @@ def run_company_analysis(
         snapshot("değerleme")
 
         score_output = mod.financial_scorecard(df)
+        piotroski_output = mod.piotroski_f_skoru(df)
 
         df_gelecek_donem = None
-        if degerleme == "EVET" and len(df) >= 13:
-            if hazir_tahmin not in ("EVET", "HAYIR"):
-                raise RuntimeError("`hazir_tahmin` seçimi EVET/HAYIR olmalı.")
+        valuation_result: ValuationResult | None = None
+        valuation_warning: str | None = None
+        financial_data_quality = "İleri değerleme çalıştırılmadı."
+        chart_metric_seconds = time.perf_counter() - chart_metric_started
+        forecast_seconds = 0.0
 
-            if not hasattr(mod, "TUFE_alma_2") or not hasattr(mod, "forecast_model_secici"):
-                raise RuntimeError(
-                    "Değerleme için gerekli `TUFE_alma_2` veya `forecast_model_secici` notebook içinde yok."
-                )
-            if not hasattr(mod, "conditional_mean"):
-                raise RuntimeError("Değerleme için gerekli `conditional_mean` notebook içinde yok.")
-
-            # TUFE exog'u yalnızca tarihsel TUFE verisi mevcutsa kullan.
-            use_exog = has_tufe
-            future_exog_1: pd.DataFrame | None = None
-            future_exog_2: pd.DataFrame | None = None
-
-            if hazir_tahmin == "EVET":
-                tufe_tahmin = pd.read_csv(project_root / "tufe_tahmin.csv")
-                tufe_tahmin.set_index("Unnamed: 0", inplace=True)
-                tufe_tahmin.index = pd.to_datetime(tufe_tahmin.index)
-
-                if has_tufe:
-                    # Tarihsel TUFE mevcut → CSV tahmin değerleriyle tamamla
-                    if "TUFE Tahmin" in tufe_tahmin.columns:
-                        df["TUFE"] = df["TUFE"].combine_first(tufe_tahmin["TUFE Tahmin"])
-                    if "Log TUFE Tahmin" in tufe_tahmin.columns:
-                        df["log_TUFE"] = df["log_TUFE"].combine_first(tufe_tahmin["Log TUFE Tahmin"])
-
-                last_month = df.index[-1].month
-                if last_month == 12:
-                    n_steps = 4
-                elif last_month == 9:
-                    n_steps = 1
-                elif last_month == 6:
-                    n_steps = 2
-                elif last_month == 3:
-                    n_steps = 3
-                else:
-                    raise ValueError(f"Beklenmeyen finansal dönem ayı: {last_month}")
-
-                if use_exog:
-                    future_tufe = tufe_tahmin.tail(n_steps)
-                    future_exog_1 = pd.DataFrame(
-                        {"log_TUFE": future_tufe["Log TUFE Tahmin"].values},
-                        index=future_tufe.index,
-                    )
-                    future_exog_2 = pd.DataFrame(
-                        {"TUFE": future_tufe["TUFE Tahmin"].values},
-                        index=future_tufe.index,
-                    )
-
+        if degerleme == "EVET":
+            forecast_started = time.perf_counter()
+            try:
+                valuation_result = build_rule_based_valuation(df_bilanco, df)
+            except InsufficientValuationDataError as exc:
+                valuation_warning = f"{INSUFFICIENT_VALUATION_MESSAGE} Eksik koşul: {exc}"
+                financial_data_quality = valuation_warning
             else:
-                # hazir_tahmin == "HAYIR" → API Key zorunlu, TUFE EVDS'den tahmin edilir
-                makro_data2 = mod.TUFE_alma_2(df, api_key)
-                tufe_sonuc = mod.forecast_model_secici(
-                    df=makro_data2,
-                    col="TUFE",
-                    freq="QS-MAR",
-                    test_size=0.20,
-                    log=True,
-                    trend_options=("t", "ct"),
-                )
-                tufe_tahmin = tufe_sonuc["future_forecast"]
-                tufe_tahmin.index = pd.to_datetime(tufe_tahmin.index)
-                future_exog_1 = pd.DataFrame(
-                    {"log_TUFE": tufe_tahmin["Log TUFE Tahmin"].values}, index=tufe_tahmin.index
-                )
-                future_exog_2 = pd.DataFrame(
-                    {"TUFE": tufe_tahmin["TUFE Tahmin"].values}, index=tufe_tahmin.index
-                )
+                df_gelecek_donem = valuation_result.summary
+                financial_data_quality = valuation_result.data_quality
+                _plot_rule_based_valuation(mod, valuation_result)
+                snapshot("değerleme")
+            forecast_seconds = time.perf_counter() - forecast_started
 
-            satis_geliri_sonuc = mod.forecast_model_secici(
-                df=df,
-                col="Satış Gelirleri",
-                exog_df=df if use_exog else None,
-                exog_cols=["log_TUFE"] if use_exog else None,
-                future_exog=future_exog_1,
-                freq="QS-MAR",
-                test_size=0.20,
-                log=True,
-                trend_options=("t", "ct"),
-            )
-            satis_geliri_tahmin = satis_geliri_sonuc["future_forecast"]
-
-            net_kar_marji_sonuc = mod.forecast_model_secici(
-                df=df,
-                col="net_kar_marjı_%",
-                exog_df=df if use_exog else None,
-                exog_cols=["TUFE"] if use_exog else None,
-                future_exog=future_exog_2,
-                freq="QS-MAR",
-                test_size=0.20,
-                log=False,
-                trend_options=("t", "ct"),
-            )
-            favok_marji_sonuc = mod.forecast_model_secici(
-                df=df,
-                col="favok_marjı_%",
-                exog_df=df if use_exog else None,
-                exog_cols=["TUFE"] if use_exog else None,
-                future_exog=future_exog_2,
-                freq="QS-MAR",
-                test_size=0.20,
-                log=False,
-                trend_options=("t", "ct"),
-            )
-            net_borc_favok_sonuc = mod.forecast_model_secici(
-                df=df,
-                col="net_borc/FAVOK",
-                exog_df=df if use_exog else None,
-                exog_cols=["TUFE"] if use_exog else None,
-                future_exog=future_exog_2,
-                freq="QS-MAR",
-                test_size=0.20,
-                log=False,
-                trend_options=("t", "ct"),
-            )
-
-            # Tahmin grafiklerini değerleme olarak etiketle
-            snapshot("değerleme")
-
-            df_join_tahmin = (
-                satis_geliri_tahmin.join(tufe_tahmin, how="left")
-                .join(net_kar_marji_sonuc["future_forecast"], how="left")
-                .join(favok_marji_sonuc["future_forecast"], how="left")
-                .join(net_borc_favok_sonuc["future_forecast"], how="left")
-            )
-
-            idx = df_join_tahmin.index[-1]
-            df_gelecek_donem = pd.DataFrame(index=[idx])
-            df_gelecek_donem["Satis_Geliri_tahmin"] = df_join_tahmin.loc[idx, "Satış Gelirleri Tahmin"]
-            df_gelecek_donem["net_kar_marjı_% Tahmin"] = df_join_tahmin.loc[
-                idx, "net_kar_marjı_% Tahmin"
-            ]
-            df_gelecek_donem["favok_marjı_% Tahmin"] = df_join_tahmin.loc[idx, "favok_marjı_% Tahmin"]
-            df_gelecek_donem["net_borc/FAVOK Tahmin"] = df_join_tahmin.loc[idx, "net_borc/FAVOK Tahmin"]
-
-            df_gelecek_donem["Net_Kar_Tahmini"] = (
-                df_gelecek_donem["Satis_Geliri_tahmin"] * df_gelecek_donem["net_kar_marjı_% Tahmin"] / 100
-            )
-            df_gelecek_donem["FAVOK_Tahmini"] = (
-                df_gelecek_donem["Satis_Geliri_tahmin"] * df_gelecek_donem["favok_marjı_% Tahmin"] / 100
-            )
-            df_gelecek_donem["Ozkaynak_Tahmini"] = (
-                df.loc[df.index[-1], "  Ana Ortaklığa Ait Özkaynaklar"] + df_gelecek_donem["Net_Kar_Tahmini"]
-            )
-            df_gelecek_donem["net_borc Tahmin"] = (
-                df_gelecek_donem["FAVOK_Tahmini"] * df_gelecek_donem["net_borc/FAVOK Tahmin"]
-            )
-
-            df_gelecek_donem["F/K Median"] = mod.conditional_mean(df["F/K"].dropna())
-            df_gelecek_donem["PD/DD Median"] = mod.conditional_mean(df["PD/DD"].dropna())
-            df_gelecek_donem["FD/FAVÖK Median"] = mod.conditional_mean(df["FD/FAVÖK"].dropna())
-            df_gelecek_donem["PD/NS Median"] = mod.conditional_mean(df["PD/NS"].dropna())
-
-            sermaye = df.loc[df.index[-1], "  Ödenmiş Sermaye"]
-            df_gelecek_donem["Tahmini HBK"] = df_gelecek_donem["Net_Kar_Tahmini"] / sermaye
-            df_gelecek_donem["F/K Fiyat Tahmini"] = df_gelecek_donem["F/K Median"] * df_gelecek_donem["Tahmini HBK"]
-            df_gelecek_donem["PD/DD Fiyat Tahmini"] = (
-                df_gelecek_donem["PD/DD Median"] * df_gelecek_donem["Ozkaynak_Tahmini"]
-            ) / sermaye
-            df_gelecek_donem["FD/FAVÖK Fiyat Tahmini"] = (
-                (df_gelecek_donem["FAVOK_Tahmini"] * df_gelecek_donem["FD/FAVÖK Median"])
-                - df_gelecek_donem["net_borc Tahmin"]
-            ) / sermaye
-            df_gelecek_donem["PD/NS Fiyat Tahmini"] = (
-                (df_gelecek_donem["Satis_Geliri_tahmin"] / sermaye) * df_gelecek_donem["PD/NS Median"]
-            )
-            df_gelecek_donem["Ortalama Tahmin"] = df_gelecek_donem[
-                ["F/K Fiyat Tahmini", "PD/DD Fiyat Tahmini", "FD/FAVÖK Fiyat Tahmini", "PD/NS Fiyat Tahmini"]
-            ].mean(axis=1)
-
-            df_gelecek_donem["fiyat"] = df.loc[df.index[-1], "duzeltilmis_fiyat"]
-            df_gelecek_donem["iskonto_%"] = ((df_gelecek_donem["Ortalama Tahmin"] / df_gelecek_donem["fiyat"]) - 1) * 100
-
-            conditions = [
-                (df_gelecek_donem["iskonto_%"] >= 20),
-                (df_gelecek_donem["iskonto_%"].between(10, 20)),
-                (df_gelecek_donem["iskonto_%"].between(-10, 10)),
-                (df_gelecek_donem["iskonto_%"].between(-20, -10)),
-                (df_gelecek_donem["iskonto_%"] < -20),
-            ]
-            choices = ["iskontolu", "az değerli", "adil", "biraz yüksek", "pahalı"]
-            df_gelecek_donem["durum"] = np.select(conditions, choices, default="belirsiz")
 
     finally:
-        images = cleanup()
+        charts = cleanup()
 
+    table_started = time.perf_counter()
     tables: list[dict[str, str]] = [
         {
-            "name": "Dönemsel Farklar (Şelale)",
+            "name": "Finansal Kalem Değişimleri",
             "category": "büyüme",
-            "html": df_fark.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_fark),
         },
         {
             "name": "Büyüme Oranları",
             "category": "büyüme",
-            "html": degisimler_df.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(degisimler_df),
         },
         {
-            "name": "Kar Marjları",
+            "name": "Kalem Bazında Trend Endeksi (Baz = 100)",
+            "category": "büyüme",
+            "html": dataframe_to_html(df_trend_endeks),
+        },
+        {
+            "name": "Gelir Tablosu Kalemleri (Gerçek Çeyreklik)",
+            "category": "büyüme",
+            "html": dataframe_to_html(df_ceyreklik_gelir),
+        },
+        {
+            "name": "Kârlılık ve Satış Yapısı",
             "category": "karlılık",
-            "html": df_karlilik.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_karlilik),
+        },
+        {
+            "name": "DuPont Analizi",
+            "category": "dupont",
+            "html": dataframe_to_html(dupont_df),
         },
         {
             "name": "Bilanço Dengesi",
             "category": "bilanço",
-            "html": df_denge.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_denge),
         },
         {
-            "name": "Likidite",
+            "name": "Likidite ve Borç Ödeme Gücü",
             "category": "likidite",
-            "html": df_likitide.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_likitide),
         },
         {
             "name": "Nakit Döngüsü",
             "category": "verimlilik",
-            "html": df_yeterlik.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_yeterlik),
         },
         {
             "name": "Nakit Akımı",
             "category": "nakit",
-            "html": df_nakit_akimi.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_nakit_akimi),
         },
         {
             "name": "Çarpanlar",
             "category": "değerleme",
-            "html": df_degerleme.to_html(index=True, border=0, classes="data-table"),
+            "html": dataframe_to_html(df_degerleme),
         },
         {
             "name": "Toplam Skor",
@@ -466,24 +796,78 @@ def run_company_analysis(
             "category": "skor",
             "html": _to_html(score_output.get("category_scores", {})),
         },
+        {
+            "name": "Piotroski F-Skoru",
+            "category": "skor",
+            "html": _piotroski_summary_html(
+                piotroski_output.get("score", float("nan")),
+                piotroski_output.get("max_score", float("nan")),
+                piotroski_output.get("eksik_kriter", 0),
+            ),
+        },
+        {
+            "name": "Piotroski F-Skoru Detayı",
+            "category": "skor",
+            "html": _to_html(piotroski_output.get("criteria", pd.DataFrame())),
+        },
     ]
 
     if df_gelecek_donem is not None:
         tables.append(
             {
-                "name": "Gelecek Dönem Değerleme",
+                "name": "İleri Değerleme Özeti",
                 "category": "değerleme",
-                "html": df_gelecek_donem.to_html(index=True, border=0, classes="data-table"),
+                "html": dataframe_to_html(df_gelecek_donem),
+            }
+        )
+    if valuation_result is not None:
+        tables.append(
+            {
+                "name": "Değerleme Yöntemleri ve Ağırlıkları",
+                "category": "değerleme",
+                "html": dataframe_to_html(valuation_result.methods),
+            }
+        )
+        tables.append(
+            {
+                "name": "Finansal Projeksiyon Senaryoları",
+                "category": "değerleme",
+                "html": dataframe_to_html(valuation_result.projection),
+            }
+        )
+        tables.append(
+            {
+                "name": "Değerleme Varsayımları",
+                "category": "değerleme",
+                "html": dataframe_to_html(valuation_result.assumptions, index=False),
             }
         )
 
+    table_seconds = time.perf_counter() - table_started
+    total_seconds = time.perf_counter() - total_started
     return RenderedOutput(
         tables=tables,
-        images=images,
+        charts=charts,
         meta={
             "hisse": hisse,
             "degerleme": degerleme,
-            "hazir_tahmin": hazir_tahmin,
+            "degerleme_uyarisi": valuation_warning,
             "rows": int(len(df)),
+            "finansal_veri_kalitesi": financial_data_quality,
+            "sirket_ozeti": _build_company_summary(
+                hisse,
+                df_bilanco,
+                df,
+                df_ceyreklik_gelir,
+            ),
+            "yil_sonu_degerleme_kpi": _valuation_kpi_summary(df_gelecek_donem),
+            "sureler_saniye": {
+                "toplam": round(total_seconds, 2),
+                "notebook_hazirlama": round(module_seconds, 2),
+                "finansal_veri_ve_fiyat": round(financial_data_seconds, 2),
+                "grafik_ve_metrikler": round(chart_metric_seconds, 2),
+                "tahmin_ve_degerleme": round(forecast_seconds, 2),
+                "tablolar": round(table_seconds, 2),
+            },
         },
     )

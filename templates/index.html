@@ -3,47 +3,235 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Stock Market Analysis</title>
-    <link rel="stylesheet" href="/static/app.css" />
+    <title>Finansal Mercek</title>
+    <link rel="icon" type="image/png" href="/static/assets/finansal-mercek-logo-v2.png" />
+    <link rel="stylesheet" href="/static/app.css?v=20260805-valuation-data-guard" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <div class="logo">SMA</div>
+        <div class="logo"><img src="/static/assets/finansal-mercek-logo-v2.png" alt="" /></div>
         <div>
-          <div class="title">Stock Market Analysis</div>
-          <div class="subtitle">Sektör + Şirket analizlerini web'de çalıştır</div>
+          <div class="title">Finansal Mercek</div>
+          <div class="subtitle">Şirketleri karşılaştırın, finansal görünümü netleştirin</div>
         </div>
       </div>
       <div class="hint">
-        Not: Şirket analizi için EVDS API Key gerekli (formdan girilebilir).
+        İş Yatırım • Yahoo Finance
       </div>
     </header>
 
     <main class="container">
       <!-- Ana sekme -->
       <div class="main-tabs">
-        <button class="main-tab active" data-tab="sector">Sektör Analizi</button>
+        <button class="main-tab active" data-tab="giris">Giriş</button>
+        <button class="main-tab" data-tab="sector">Sektör Analizi</button>
         <button class="main-tab" data-tab="company">Şirket Analizi</button>
       </div>
 
+      <!-- =================== GİRİŞ / TANITIM PANELİ =================== -->
+      <section id="tab-giris" class="panel active">
+        <div class="landing-hero">
+          <div class="hero-eyebrow">FİNANSAL MERCEK</div>
+          <h1>Finansal tabloları daha kolay yorumlayın</h1>
+          <p>
+            Borsa İstanbul’da işlem gören şirketleri büyüme, kârlılık, borçluluk, nakit akışı
+            ve değerleme göstergeleri açısından inceleyin. Tek bir şirketin dönemsel gelişimini
+            takip edebilir veya aynı sektörde faaliyet gösteren şirketleri ortak finansal
+            ölçütlerle karşılaştırabilirsiniz. Finansal tablo yapıları ve değerlendirme
+            kriterleri önemli ölçüde farklılık gösterdiğinden bankacılık, sigortacılık ve
+            faktoring şirketleri proje kapsamı dışında tutulmuştur.
+          </p>
+          <div class="hero-proof" aria-label="Uygulamanın temel özellikleri">
+            <span>Şirket analizi</span>
+            <span>Sektör karşılaştırması</span>
+            <span>Senaryo tabanlı değerleme</span>
+          </div>
+          <div class="landing-cta">
+            <button class="primary" data-goto-tab="sector">Sektör Analizine Başla</button>
+            <button class="primary" data-goto-tab="company">Şirket Analizine Başla</button>
+          </div>
+        </div>
+
+        <section class="landing-how" aria-labelledby="how-title">
+          <h2 id="how-title" class="landing-section-title">Üç adımda analize başlayın</h2>
+          <div class="landing-how-grid">
+            <div class="how-card">
+              <div class="how-number">1</div>
+              <div>
+                <h3>Seçiminizi yapın</h3>
+                <p>İncelemek istediğiniz hisse kodunu veya karşılaştırmak istediğiniz sektörü seçin.</p>
+              </div>
+            </div>
+            <div class="how-card">
+              <div class="how-number">2</div>
+              <div>
+                <h3>Veriler hazırlansın</h3>
+                <p>Uygulama güncel kaynakları işler. Kapsama göre analiz birkaç dakika sürebilir.</p>
+              </div>
+            </div>
+            <div class="how-card">
+              <div class="how-number">3</div>
+              <div>
+                <h3>Sonuçları yorumlayın</h3>
+                <p>Güçlü ve dikkat edilmesi gereken alanları tablo, grafik ve açıklamalarla inceleyin.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- İki ana modül -->
+        <h2 class="landing-section-title">İhtiyacınıza göre analiz türünü seçin</h2>
+        <div class="landing-modules">
+          <div class="module-card">
+            <div class="module-icon">🏭</div>
+            <h2>Sektör Analizi</h2>
+            <p>Aynı sektördeki şirketlerin büyüklük, kârlılık ve değerleme farklarını tek bakışta görün.</p>
+            <ul>
+              <li><strong>Karşılaştırma tablosu:</strong> Şirketleri satış, FAVÖK, kâr marjı, borçluluk ve değerleme çarpanlarına göre yan yana inceleyin.</li>
+              <li><strong>Sıralama grafikleri:</strong> Hangi şirketin daha büyük, daha kârlı veya daha borçlu olduğunu hızlıca görün.</li>
+              <li><strong>Isı haritası:</strong> Sektöre göre güçlü ve zayıf kalan oranları renklerle ayırt edin.</li>
+            </ul>
+          </div>
+          <div class="module-card">
+            <div class="module-icon">🏢</div>
+            <h2>Şirket Analizi</h2>
+            <p>Bir şirketin finansal sağlığını, geçmiş eğilimini ve olası gelecek değerlemesini inceleyin.</p>
+            <ul>
+              <li>Sonuçları <strong>tablo</strong> veya <strong>grafik</strong> görünümünde inceleyin.</li>
+              <li>İsterseniz mevsimsellik, kârlılık ve tarihsel çarpanlarla ileri değerleme yapın.</li>
+              <li>Her bölümde önce bakmanız gereken göstergeleri kısa açıklamalarla görün.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Şirket analizi kategorileri -->
+        <h2 class="landing-section-title">Şirket analizinde hangi sorulara yanıt bulabilirsiniz?</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-icon">📈</div>
+            <h3>Büyüme</h3>
+            <p>Satış ve kâr kalemleri geçen çeyreğe ve geçen yılın aynı dönemine göre büyüyor mu?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💰</div>
+            <h3>Kârlılık</h3>
+            <p>Şirket satışlarını ne ölçüde kâra dönüştürüyor ve bu verimlilik iyileşiyor mu?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🧮</div>
+            <h3>DuPont</h3>
+            <p>Özkaynak kârlılığındaki değişim kâr marjından mı, verimlilikten mi, kaldıraçtan mı geliyor?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">⚖️</div>
+            <h3>Bilanço</h3>
+            <p>Şirketin varlıkları nasıl finanse ediliyor; borç ve özkaynak dengesi sağlıklı mı?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💧</div>
+            <h3>Likidite</h3>
+            <p>Şirket kısa vadeli borçlarını mevcut nakit ve likit varlıklarıyla karşılayabilir mi?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">⚙️</div>
+            <h3>Verimlilik</h3>
+            <p>Satış, stok, alacak ve borç süreçleri nakde ne kadar hızlı dönüşüyor?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💵</div>
+            <h3>Nakit Akışı</h3>
+            <p>Muhasebe kârı gerçek nakde dönüşüyor mu; şirket faaliyetlerinden nakit yaratabiliyor mu?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📊</div>
+            <h3>Değerleme</h3>
+            <p>Hisse kendi geçmişine göre pahalı mı; temkinli, baz ve iyimser senaryolar ne söylüyor?</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🏆</div>
+            <h3>Skor</h3>
+            <p>Finansal görünümü tek puanda özetleyin; puanı oluşturan güçlü ve zayıf alanları ayrıca inceleyin.</p>
+          </div>
+        </div>
+
+        <h2 class="landing-section-title">Veriler ve tahminler hakkında</h2>
+        <div class="trust-grid">
+          <div class="trust-card">
+            <div class="trust-icon">✓</div>
+            <div>
+              <h3>Kaynaklar açıkça belirtilir</h3>
+              <p>Finansal tablolar İş Yatırım, dönem sonu ve güncel fiyatlar Yahoo Finance üzerinden alınır.</p>
+            </div>
+          </div>
+          <div class="trust-card">
+            <div class="trust-icon">≈</div>
+            <div>
+              <h3>Tahminler kesin sonuç değildir</h3>
+              <p>Senaryolar geçmiş mevsimsellik, marj ve çarpan dağılımlarına dayanır. Sonuçlar fiyat garantisi veya yatırım tavsiyesi değildir.</p>
+            </div>
+          </div>
+        </div>
+
+        <details class="sector-context-note">
+          <summary>
+            <span class="context-icon" aria-hidden="true">!</span>
+            <span class="context-heading">
+              <strong>Sektör oranlarını yorumlarken dikkat</strong>
+              <small>Holding ve finansal faaliyet içeren şirketlerde marjlar farklı anlam taşıyabilir.</small>
+            </span>
+            <span class="context-chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="context-body">
+            <p>
+              Uygulama oranları şirketlerin yayımlanan finansal tablo kalemlerinden standart formüllerle hesaplar.
+              Ancak satış geliri ve kâr kalemleri her iş modelinde aynı ekonomik anlamı taşımaz.
+            </p>
+            <p>
+              Finansal faaliyet içeren holdinglerde toplam brüt kâr; ticari satışlara ek olarak faiz, ücret ve
+              komisyon faaliyetlerinin sonucunu da içerebilir. Bu nedenle brüt veya net kâr marjı %100'ü aşabilir;
+              bu durum tek başına hesaplama hatası ya da çok yüksek kârlılık anlamına gelmez.
+            </p>
+            <p>
+              Şirketleri benzer faaliyet yapısındaki firmalarla karşılaştırın; marjları ROE, ROA, PD/DD,
+              borçluluk ve nakit akışı göstergeleriyle birlikte değerlendirin.
+            </p>
+          </div>
+        </details>
+
+        <div class="landing-footnote">
+          <strong>Önemli:</strong> Karar vermeden önce şirket açıklamalarını, bağımsız denetim raporlarını
+          ve güncel piyasa koşullarını ayrıca değerlendirin.
+        </div>
+      </section>
+
       <!-- =================== SEKTÖR PANELİ =================== -->
-      <section id="tab-sector" class="panel active">
+      <section id="tab-sector" class="panel">
         <div class="card">
-          <h2>Seçimler</h2>
+          <h2>Sektör Analizi Ayarları</h2>
           <div class="grid">
             <label>
               <span>Sektör</span>
               <select id="sector-sektor"></select>
             </label>
             <label>
-              <span>Analiz Türü</span>
+              <span>Karşılaştırma Yöntemi</span>
               <select id="sector-analiz-turu"></select>
+              <small class="field-help">Sektör karşılaştırmasında toplam veya medyan referansı seçin.</small>
             </label>
             <label>
-              <span>Excel Kaydı</span>
+              <span>Sonuçlar Excel'e Kaydedilsin mi?</span>
               <select id="sector-excel"></select>
+              <small class="field-help">EVET seçerseniz sonuç dosyası proje klasörüne kaydedilir.</small>
             </label>
+          </div>
+          <div class="checkbox-field">
+            <label class="checkbox-label">
+              <input type="checkbox" id="sector-piotroski" />
+              <span>Piotroski F-Skoru Hesapla</span>
+            </label>
+            <span class="checkbox-hint">İsteğe bağlıdır; her şirket için ek hesaplama yapıldığı için analiz süresini uzatır.</span>
           </div>
           <div class="actions">
             <button id="run-sector" class="primary">Analizi Başlat</button>
@@ -55,13 +243,13 @@
         <div id="sector-toolbar" class="result-toolbar hidden">
           <div class="pill-group">
             <button class="pill active" id="sector-mode-table" data-mode="table">Tablo</button>
-            <button class="pill" id="sector-mode-image" data-mode="image">Görseller</button>
+            <button class="pill" id="sector-mode-image" data-mode="image">Grafikler</button>
           </div>
           <!-- Görsel alt filtresi -->
           <div class="pill-group" id="sector-img-filter-bar">
             <button class="pill sm active" data-img-filter="all">Tümü</button>
             <button class="pill sm" data-img-filter="bar">Bar Grafikler</button>
-            <button class="pill sm" data-img-filter="heatmap">Heatmap</button>
+            <button class="pill sm" data-img-filter="heatmap">Isı Haritası</button>
           </div>
         </div>
 
@@ -71,34 +259,18 @@
       <!-- =================== ŞİRKET PANELİ =================== -->
       <section id="tab-company" class="panel">
         <div class="card">
-          <h2>Seçimler</h2>
+          <h2>Şirket Analizi Ayarları</h2>
           <div class="grid">
             <label>
-              <span>Hisse (örn: THYAO)</span>
+              <span>Hisse Kodu</span>
               <input id="company-hisse" placeholder="THYAO" />
+              <small class="field-help">BIST kodunu nokta veya uzantı olmadan girin.</small>
             </label>
             <label>
-              <span>İstatistiksel Değerleme</span>
+              <span>Yıl Sonu Değerlemesi Yapılsın mı?</span>
               <select id="company-degerleme"></select>
+              <small class="field-help">Ara dönemlerde cari yıl sonu, Aralık bilançosunda sonraki yıl sonu için senaryo tabanlı değerleme yapılır.</small>
             </label>
-            <label id="company-hazir-wrap" class="hidden">
-              <span>Hazır TUFE Tahmini Kullan</span>
-              <select id="company-hazir"></select>
-            </label>
-            <div class="evds-field-wrap">
-              <span class="evds-label">
-                EVDS API Key
-                <span id="evds-badge" class="evds-badge hidden">Zorunlu</span>
-                <span class="evds-opt-text" id="evds-opt-text">— opsiyonel</span>
-              </span>
-              <div class="input-pw-wrap">
-                <input id="company-evds" type="password" placeholder="ENV yoksa buraya girin" autocomplete="off" />
-                <label class="show-key-label">
-                  <input type="checkbox" id="show-evds-key" />
-                  Key Göster
-                </label>
-              </div>
-            </div>
           </div>
           <div class="actions">
             <button id="run-company" class="primary">Analizi Başlat</button>
@@ -113,13 +285,15 @@
             <!-- Tablo / Görsel toggle -->
             <div class="sidebar-toggle">
               <button class="pill active" id="company-mode-table" data-mode="table">Tablo</button>
-              <button class="pill" id="company-mode-image" data-mode="image">Görsel</button>
+              <button class="pill" id="company-mode-image" data-mode="image">Grafik</button>
             </div>
             <!-- Kategori butonları -->
             <div class="sidebar-section-label">Kategori</div>
             <nav class="cat-nav">
-              <button class="cat-btn active" data-cat="büyüme">Büyüme</button>
+              <button class="cat-btn active" data-cat="özet">Özet</button>
+              <button class="cat-btn" data-cat="büyüme">Büyüme</button>
               <button class="cat-btn" data-cat="karlılık">Karlılık</button>
+              <button class="cat-btn" data-cat="dupont">DuPont</button>
               <button class="cat-btn" data-cat="bilanço">Bilanço</button>
               <button class="cat-btn" data-cat="likidite">Likidite</button>
               <button class="cat-btn" data-cat="verimlilik">Verimlilik</button>
@@ -136,9 +310,18 @@
     </main>
 
     <footer class="footer">
-      <div>FastAPI • HTML/CSS/JS • Notebook fonksiyonları</div>
+      <div>Finansal Mercek • Veriler otomatik hazırlanır • Sonuçlar yatırım tavsiyesi değildir</div>
     </footer>
 
-    <script src="/static/app.js"></script>
+    <!-- Grafik büyütme (zoom) modalı -->
+    <div id="chart-zoom-overlay" class="chart-zoom-overlay hidden">
+      <div class="chart-zoom-panel">
+        <button id="chart-zoom-close" class="chart-zoom-close" aria-label="Kapat">✕</button>
+        <div id="chart-zoom-content" class="chart-zoom-content"></div>
+        <div class="chart-zoom-caption">Alt zaman çubuğunu sürükleyerek dönemi değiştirin · Kenarlarından tutarak yakınlaştırın · Çift tıklayarak sıfırlayın · ESC veya dış alana tıklayarak kapatın</div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=20260805-valuation-math-note"></script>
   </body>
 </html>

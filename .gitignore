@@ -33,6 +33,7 @@ desktop.ini
 # ===== Uygulama çıktıları (runtime'da üretilir) =====
 static/outputs/
 static/plots/
+backups/
 
 # ===== Hassas dosyalar =====
 evds_api.txt
