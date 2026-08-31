@@ -13,6 +13,7 @@ Veriler `isyatirim.com.tr` (bilanço/gelir tablosu) ve `yfinance` (fiyat) kaynak
   - [Sektör Analizi](#sektör-analizi)
   - [Şirket Analizi](#şirket-analizi)
   - [Bilgilendirme Notları](#bilgilendirme-notları)
+- [Ürün Kapsamı ve Uyum Tasarımı](#ürün-kapsamı-ve-uyum-tasarımı)
 - [Mimari](#mimari)
 - [Proje Yapısı](#proje-yapısı)
 - [Kurulum](#kurulum)
@@ -39,13 +40,16 @@ Temel finansal dönüşüm ve grafik fonksiyonları iki Jupyter Notebook'ta (`Se
 
 ### Sektör Analizi
 
-Seçilen sektördeki tüm şirketler için tek bir karşılaştırma tablosu ve iki grafik grubu üretir:
+Seçilen sektördeki tüm şirketler için tek bir karşılaştırma tablosu ve üç grafik grubu üretir:
 
-- **Karşılaştırma tablosu**: PD, FD, Satış Gelirleri, FAVÖK, Ana Ortaklık Payları gibi mutlak büyüklükler; F/K, FD/FAVÖK, FD/NS, PD/DD gibi değerleme çarpanları; brüt/net kâr marjı; faiz karşılama ve ihracat oranları; DuPont bileşenleri (Net Kâr Marjı, Aktif Devir Hızı, Özkaynak Çarpanı, ROE); Piotroski F-Skoru. "SEKTÖR TOPLAM" ve "SEKTÖR Median" satırları, seçilen analiz türüne (TOPLAM/MEDIAN) göre referans çarpanı oluşturarak her şirket için **göreceli (relative) fiyat tahmini** ve **iskonto/prim %** hesaplar.
+- **Karşılaştırma tablosu**: PD, FD, Satış Gelirleri, FAVÖK, Ana Ortaklık Payları gibi mutlak büyüklükler; F/K, FD/FAVÖK, FD/NS, PD/DD gibi değerleme çarpanları; brüt/net kâr marjı; faiz karşılama ve ihracat oranları; DuPont bileşenleri (Net Kâr Marjı, Aktif Devir Hızı, Özkaynak Çarpanı, ROE); Piotroski F-Skoru. "SEKTÖR TOPLAM" ve "SEKTÖR Median" satırları, seçilen analiz türüne (TOPLAM/MEDIAN) göre her şirket için **sektör referanslı model değeri** ve **piyasa fiyatına göre model farkı** hesaplar.
 - **Bar Grafikler**: Mutlak büyüklüklerin (PD, FD, Satış, FAVÖK, Piotroski F-Skoru) şirketler arası sıralamalı karşılaştırması.
 - **Heatmap**: Değerleme çarpanlarının ve oranların (F/K, FD/FAVÖK, PD/DD, brüt/net kâr marjı, DuPont bileşenleri) satır bazlı persentil renklendirmesiyle karşılaştırması.
+- **Sektör Finansalları**: Şirketlerin yıllıklandırılmış gelir tablosu toplamlarından sektör fark, baz 100 trend endeksi ve satış ağırlıklı brüt/faaliyet/FAVÖK/net kâr marjı grafikleri. TOPLAM/MEDIAN değerleme seçimi bu grafikleri değiştirmez.
 
 Veri çekimi, sektördeki şirketler için kontrollü biçimde paralel yapılır. Tek bir şirketin dört dönemlik mali tablo paketleri de eşzamanlı indirilir; süreç genelindeki bağlantı sınırı veri kaynağının aşırı yüklenmesini önler.
+
+Sektör finansal grafiklerinde eksik açıklamanın sahte düşüş üretmemesi için şirketlerin çoğunluğunun ulaştığı en güncel referans dönem belirlenir ve her kalemde bu döneme ulaşmış sabit şirket evreni kullanılır. En güncel dönemi henüz açıklamayan şirketler son mali dönemleriyle birlikte kullanıcıya gösterilir; veri kaynağı hataları bu listeden ayrı raporlanır.
 
 ### Şirket Analizi
 
@@ -61,7 +65,7 @@ Seçilen tek şirket için 10 kategoride dönemsel (çeyreklik) analiz sunar:
 | **Likidite** | Cari oran, likidite (asit-test) oranı, nakit oranı, net borç, Net Borç/FAVÖK ve faiz karşılama oranı |
 | **Verimlilik** | Alacak/stok/borç devir hızları, nakit dönüşüm döngüsü (CCC) |
 | **Nakit Akışı** | Faaliyet/yatırım/finansman nakit akımları, serbest nakit akımı (FCF) |
-| **Değerleme** | F/K, FD/FAVÖK, PD/DD, PD/Satışlar çarpanları; mevsimsellik ve sağlamlaştırılmış senaryolarla ileri değerleme |
+| **Değerleme** | F/K, FD/FAVÖK, PD/DD ve FD/Satışlar çarpanları; şirketin kendi tarihsel çarpanları, mevsimsellik ve geçmiş hata doğrulamasıyla ileri değerleme |
 | **Skor** | 0-100 arası ağırlıklı finansal skor kartı (kârlılık/bilanço/likidite/verimlilik alt skorları) + **Piotroski F-Skoru** (9 kriter, detaylı kriter tablosu ile) |
 
 #### Özet karşılaştırmasının dönem ve işaret kuralları
@@ -77,7 +81,13 @@ Skor kartı ve Piotroski F-Skoru, mutlak TL tutarları yerine **oran bazlı** he
 
 Aralık bilançosu geldiğinde cari yıl yeniden tahmin edilmez. Son tamamlanan yılın büyümesi ve marjları geçmiş yıllık dağılımla dengelenerek sonraki Aralık için 12 aylık ileri satış, net kâr, FAVÖK, net borç ve özkaynak projeksiyonu hazırlanır. Özkaynak köprüsü ara dönemlerde yalnızca henüz açıklanmamış çeyreklerin kâr/zararını; Aralık sonrasında ise geçmiş özkaynak hareketlerinden türetilen elde tutma oranıyla gelecek yıl kârını ekler.
 
-F/K, PD/DD, FD/FAVÖK ve PD/NS hedefleri eşit ortalanmaz. Her yöntemin tarihsel örnek sayısı ve çarpan dağılımının istikrarı güven ağırlığına dönüştürülür; negatif kâr veya FAVÖK nedeniyle anlamsızlaşan yöntem ağırlık dışı bırakılır. Grafik görünümünde güncel fiyat, ağırlıklı hedef, temkinli–iyimser senaryo aralığı, potansiyel ve veri güven puanı KPI kartlarıyla sunulur.
+F/K, PD/DD, FD/FAVÖK ve **FD/NS** hedefleri eşit ortalanmaz. Satışlar bütün sermaye sağlayıcılarına ait olduğu için PD/NS yerine FD/NS kullanılır; tahmini firma değerinden net borç düşülerek özkaynak değeri ve hisse başı hedef bulunur. Her yöntemin tarihsel örnek sayısı ve çarpan dağılımının istikrarı güven ağırlığına dönüştürülür; negatif kâr veya FAVÖK nedeniyle anlamsızlaşan yöntem ağırlık dışı bırakılır.
+
+Şirket baz çarpanı yalnız şirketin kendi son altı geçerli gözleminden hesaplanır; son döneme `%65`, şirket medyanına `%35` ağırlık verir ve şirket geçmişinin `%10–%90` sınırlarında tutulur. Sektör medyanı veya sektör çıpası değerleme hesabına katılmaz.
+
+Kullanıcı arayüzünde tek bir “hedef fiyat” veya “iskontolu/pahalı” hükmü yerine temkinli–baz–iyimser **model değerleme aralığı**, model değerleme ortalaması ve piyasa fiyatına göre matematiksel model farkı gösterilir. Bu fark temettü içermez ve alım, satım veya tutma önerisi olarak sunulmaz. Hesaplama motorundaki iç bantlar geriye dönük test uyumluluğu için korunurken yönlendirici sınıflar kullanıcıya gösterilmez.
+
+Güven puanı istatistiksel gerçekleşme olasılığı değildir ancak artık yalnız örnek sayısına dayanmaz. Uygun geçmiş Aralık dönemlerinde model yalnız o tarihte mevcut verilerle çalıştırılır, sonraki Aralık gerçekleşen fiyatıyla karşılaştırılır ve medyan mutlak yüzde hata güven puanında `%35` ağırlık taşır. Senaryo genişliği `%25`, çarpan gözlem sayısı `%15`, tamamlanmış yıl sayısı `%15` ve projeksiyon girdisi `%10` ağırlıktadır. Geriye dönük doğrulama penceresi yoksa puan “Yüksek” seviyesine çıkamaz.
 
 Yeni halka arz edilmiş veya finansal geçmişi henüz yeterince oluşmamış şirketlerde değerleme zorlanmaz. En az iki tamamlanmış geçmiş mali yıl ya da en az dört geçerli çarpan gözlemi bulunmadığında şirket analizinin diğer bölümleri gösterilmeye devam eder; değerleme alanında yeterli veri bulunmadığını açıklayan bir uyarı sunulur.
 
@@ -88,6 +98,19 @@ Değerleme çarpanları son altı geçerli çeyreğin güncel rejiminden üretil
 ### Bilgilendirme Notları
 
 Her kategorinin/görünümün üstünde, o analizin ne ölçtüğünü ve neden önemli olduğunu özetleyen, akademik/uygulayıcı kaynak alıntısı içeren kısa bir bilgi notu gösterilir (örn. Piotroski F-Skoru için Piotroski (2000), DuPont için Donaldson Brown/DuPont de Nemours, değerleme çarpanları için Damodaran). Bu notlar tamamen frontend'de (`static/app.js`) tanımlıdır, backend hesaplamasını etkilemez.
+
+## Ürün Kapsamı ve Uyum Tasarımı
+
+Finansal Mercek, aynı veri ve metodoloji sürümünde bütün kullanıcılara aynı sonucu veren **kişiselleştirilmemiş finansal analiz ve modelleme aracı** olarak tasarlanmıştır. Uygulama kullanıcının mali durumunu, portföyünü, yatırım süresini, yatırım amacını veya risk-getiri tercihlerini toplamaz ve bu bilgilere göre öneri üretmez. Emir iletimi, portföy dağılımı, “al/sat/tut” talimatı ve kullanıcıya özel bildirim kapsam dışındadır.
+
+- Sektör referanslı model değerleri ile şirket değerleme raporları görüntülenmeden önce kapsam ve risk bilgilendirmesi gösterilir.
+- Her şirket/sektör raporu benzersiz rapor kimliği, oluşturulma zamanı, veri kaynakları, finansal dönem/kapsam, metodoloji sürümü, güncelleme ve düzeltme politikası taşır.
+- Değerleme arayüzünde yönlendirici “iskontolu/pahalı” etiketleri kullanılmaz; sonuçlar piyasa fiyatının model ortalaması/aralığına göre nötr biçimde ifade edilir.
+- Tahmin, varsayım ve fiyatların garanti olmadığı; kaynak gecikmesi, eksik dönem ve kurumsal işlem düzeltmelerinin sonucu etkileyebileceği açıkça belirtilir.
+- Çıkar çatışması, sponsorlu içerik, veri lisansları, kullanıcı sözleşmesi ve KVKK belgeleri için giriş ekranında ticari yayın öncesi kontrol alanı bulunur.
+- Isı haritalarının mevcut göreli renk ölçekleri ve renk anlamları değiştirilmemiştir.
+
+Bu teknik önlemler hukuki görüş veya SPK faaliyet izni yerine geçmez. Ticari yayından önce III-37.1 kapsamındaki zorunlu uyarı metni, işletmeci kimliği, sözleşmeler, KVKK belgeleri, çıkar çatışması politikası ve piyasa verisi lisansları sermaye piyasası hukukçusu tarafından doğrulanmalıdır.
 
 ---
 
@@ -112,7 +135,7 @@ FastAPI (app/main.py)
 - **`app/valuation.py`**: Ara dönem mevsimselliğini, 12 aylık ileri Aralık projeksiyonunu, marj/net borç senaryolarını ve güven ağırlıklı çarpan değerlemesini yürütür.
 - **`app/forecasting.py` / `app/tufe_cache.py`**: Eski notebook uyumluluğu için korunur; web uygulamasının ileri değerleme akışında kullanılmaz.
 - **`app/table_format.py`**: Web tablolarında Türkçe sayı gösterimini, Excel çıktılarında ise gerçek sayısal hücre formatlarını merkezi olarak uygular.
-- **`app/plotly_theme.py`**: Tüm grafiklerde ortak koyu tema, renk paleti ve `format_tr_number()` ile Türkçe binlik/ondalık sayı formatlaması sağlar.
+- **`app/plotly_theme.py`**: Tüm grafiklerde ortak açık tema (`#ECF1E5` zemin, yeşil vurgu ve kırmızı risk renkleri), renk paleti ve `format_tr_number()` ile Türkçe binlik/ondalık sayı formatlaması sağlar.
 - **`app/financial_metrics.py`**: Piotroski F-Skoru, DuPont ayrıştırması, faiz karşılama/ihracat oranları, gerçek çeyreklik akış hazırlama, yıl sonu mutabakatı ve güvenli `yfinance` erişiminin ortak kaynağıdır.
 - **`balancesheet.py`**: `isyatirim.com.tr` üzerinden bilanço/gelir tablosu verisi çeker; bağlantı havuzu, kontrollü paralellik, 5 dakikalık süreç içi önbellek ve geçici ağ hatalarına karşı üstel geri çekilmeli yeniden deneme mantığı içerir.
 
@@ -135,14 +158,12 @@ FastAPI (app/main.py)
 ├── templates/index.html        Tek sayfa arayüz (Giriş / Sektör Analizi / Şirket Analizi sekmeleri)
 ├── static/
 │   ├── app.js                  Frontend mantığı (fetch, özet/KPI render, grafikler, bilgi notları)
-│   ├── app.css                 Koyu tema stilleri
+│   ├── app.css                 Açık tema ve responsive stiller
 │   └── outputs/                (gitignore'lu) çalışma zamanında üretilen dosyalar
 ├── Sektor Analizi.ipynb        Sektör finansal dönüşüm ve notebook fonksiyonları
 ├── Sirket Analiz.ipynb         Şirket finansal dönüşüm ve notebook fonksiyonları
-├── TUFE Tahmin.ipynb           TÜFE istatistiksel tahmin modeli — bağımsız/deneysel notebook
 ├── balancesheet.py             isyatirim.com.tr'den bilanço/gelir tablosu çekimi (retry'lı)
 ├── temel_ozet.xlsx             Şirket → sektör eşlemesi (sektör seçim listesi buradan üretilir)
-├── sektorler/                  Mevcut/örnek sektör çalışma dosyaları
 ├── static/outputs/sektorler/   Çalışma zamanında üretilen Excel çıktıları (gitignore'lu)
 ├── requirements.txt            Sabitlenmiş çalışma zamanı bağımlılıkları
 └── requirements-dev.txt        Test/doğrulama bağımlılıkları
@@ -189,7 +210,7 @@ Test paketi; API doğrulamalarını, aynı çeyrek şirket özetini, net borç i
 python -m unittest discover -s tests -v
 ```
 
-`pytest` kuruluysa daha kısa çıktı için `python -m pytest -q` da kullanılabilir. Son proje kontrolünde **75 test** başarıyla geçmiştir.
+`pytest` kuruluysa daha kısa çıktı için `python -m pytest -q` da kullanılabilir. Son proje kontrolünde **88 test** başarıyla geçmiştir.
 
 ## Çıktılar
 
@@ -198,7 +219,7 @@ python -m unittest discover -s tests -v
 - Web tabloları Türkçe gösterim kullanır: büyük tutarlar `1.234.567`, oran ve fiyatlar `12,34`, dönemler `2026-03`, eksik değerler `—` biçiminde sunulur. Bu dönüşüm yalnızca gösterimi etkiler; hesaplama verileri sayısal kalır.
 - Excel çıktıları sayıları metne çevirmeden `#,##0` / `#,##0.00` hücre biçimleriyle kaydeder; başlık satırı sabitlenir ve otomatik filtre eklenir.
 - Grafikler sunucu tarafında dosyaya yazılmaz; Plotly figürleri doğrudan JSON olarak tarayıcıya gönderilir ve tarayıcıda render edilir. Ana grafikler tıklanarak büyütülebilir; özet panosundaki mini grafikler kart genişliğine göre duyarlı biçimde boyutlanır.
-- İleri değerlemede dört yöntemin hedefleri, güven ağırlıkları, finansal projeksiyon senaryoları ve kullanılan varsayımlar ayrı tablolarda gösterilir.
+- Model bazlı değerlemede dört yöntemin senaryo değerleri, yeterlilik ağırlıkları, finansal projeksiyon senaryoları ve kullanılan varsayımlar ayrı tablolarda gösterilir.
 
 ## Notebook'ları Doğrudan Kullanmak
 

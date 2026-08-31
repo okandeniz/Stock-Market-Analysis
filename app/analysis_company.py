@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
 from .notebook_runtime import NotebookRuntime, RenderedOutput
-from .plotly_theme import apply_theme, format_tr_number
+from .plotly_theme import ACCENT, ACCENT_H, DOWN_COLOR, TEXT_COLOR, apply_theme, format_tr_number
 from .table_format import dataframe_to_html
 from .valuation import (
     INSUFFICIENT_VALUATION_MESSAGE,
@@ -56,12 +58,294 @@ def _valuation_kpi_summary(df: pd.DataFrame | None) -> dict[str, Any] | None:
         "current_price": first_finite("Güncel Fiyat", "fiyat"),
         "average_target": first_finite("Ağırlıklı Hedef", "Ortalama Tahmin"),
         "upside_pct": first_finite("Hedef Potansiyeli %", "iskonto_%"),
+        "target_period_return_pct": first_finite(
+            "Hedef Dönem Getirisi %",
+            "Hedef Potansiyeli %",
+            "iskonto_%",
+        ),
         "scenario_low": finite_value("Temkinli Hedef"),
         "scenario_high": finite_value("İyimser Hedef"),
         "confidence": str(row.get("Veri Güveni", "—")),
         "confidence_score": finite_value("Güven Puanı"),
         "status": str(status),
     }
+
+
+def _neutral_valuation_position(status: Any) -> str:
+    """Translate internal valuation bands into non-directive presentation copy."""
+    normalized = str(status or "").strip().casefold()
+    if normalized in {"iskontolu", "az değerli"}:
+        return "Piyasa fiyatı model ortalamasının altında"
+    if normalized in {"pahalı", "biraz yüksek"}:
+        return "Piyasa fiyatı model ortalamasının üzerinde"
+    if normalized == "adil":
+        return "Piyasa fiyatı model ortalamasına yakın"
+    return "Model konumu hesaplanamadı"
+
+
+def _valuation_summary_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a user-facing copy of the valuation summary with neutral labels."""
+    display = df.copy()
+    if "Değerleme Görünümü" in display.columns:
+        display["Piyasa Fiyatının Model Aralığındaki Konumu"] = display[
+            "Değerleme Görünümü"
+        ].map(_neutral_valuation_position)
+    if "Hedef Dönem Getirisi %" in display.columns:
+        display["Piyasa Fiyatına Göre Model Farkı (%)"] = display[
+            "Hedef Dönem Getirisi %"
+        ]
+    display = display.rename(
+        columns={
+            "Ağırlıklı Hedef": "Model Değerleme Ortalaması",
+            "Temkinli Hedef": "Temkinli Senaryo Değeri",
+            "İyimser Hedef": "İyimser Senaryo Değeri",
+            "Hedef Potansiyeli %": "Model Fiyat Farkı (%)",
+            "Veri Güveni": "Veri ve Model Yeterliliği",
+            "Güven Puanı": "Yeterlilik Puanı",
+        }
+    )
+    return display.drop(
+        columns=["Hedef Dönem Getirisi %", "Değerleme Görünümü"],
+        errors="ignore",
+    )
+
+
+def _valuation_methods_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Use valuation terminology without changing the calculation schema."""
+    return df.rename(
+        columns={
+            "Temkinli Hedef": "Temkinli Senaryo Değeri",
+            "Baz Hedef": "Baz Senaryo Değeri",
+            "İyimser Hedef": "İyimser Senaryo Değeri",
+        }
+    )
+
+
+def _report_metadata(
+    hisse: str,
+    financials: pd.DataFrame,
+    *,
+    valuation_created: bool,
+) -> dict[str, Any]:
+    """Create traceable, user-visible report metadata for each analysis run."""
+    created_at = datetime.now(ZoneInfo("Europe/Istanbul"))
+    period = "—"
+    if isinstance(financials, pd.DataFrame) and not financials.empty:
+        parsed = pd.to_datetime(financials.index, errors="coerce")
+        valid = parsed[~pd.isna(parsed)]
+        if len(valid):
+            latest = pd.Timestamp(valid[-1])
+            period = f"{latest.year}/{latest.month}"
+    return {
+        "report_id": f"FM-{hisse}-{created_at:%Y%m%d-%H%M%S}",
+        "generated_at": created_at.isoformat(timespec="seconds"),
+        "financial_period": period,
+        "financial_source": "İş Yatırım",
+        "price_source": "Yahoo Finance",
+        "price_time_note": (
+            "Fiyat, analiz çalıştırılırken veri kaynağındaki son erişilebilir "
+            "gözlemden alınır; gerçek zamanlı fiyat garantisi verilmez."
+        ),
+        "methodology_version": "FM-Değerleme v2.0",
+        "valuation_created": bool(valuation_created),
+        "update_policy": (
+            "Rapor, kullanıcı analizi yeniden çalıştırdığında erişilebilen finansal "
+            "tablolar ve fiyat verileriyle yeniden oluşturulur."
+        ),
+        "correction_policy": (
+            "Veri veya hesaplama hatası tespit edilirse sonuç yeni rapor kimliği ve "
+            "güncel metodoloji sürümüyle yeniden yayımlanır."
+        ),
+    }
+
+
+def _build_vertical_balance_analysis(raw_financials: pd.DataFrame) -> pd.DataFrame:
+    """Compare the latest balance sheet with the same quarter one year earlier.
+
+    Each balance-sheet line is shown both as an amount and as a share of total
+    assets. The calculation mirrors the ``Dikey Analiz`` workbook: line item /
+    ``TOPLAM VARLIKLAR`` for each of the two comparable reporting dates.
+    """
+    if not isinstance(raw_financials, pd.DataFrame) or raw_financials.empty:
+        return pd.DataFrame()
+
+    frame = raw_financials.copy()
+    parsed_index = pd.to_datetime(frame.index, errors="coerce")
+    valid_positions = np.flatnonzero(~pd.isna(parsed_index))
+    if not len(valid_positions):
+        return pd.DataFrame()
+
+    frame = frame.iloc[valid_positions].copy()
+    frame.index = pd.DatetimeIndex(parsed_index[valid_positions])
+    frame = frame.sort_index()
+    latest_period = pd.Timestamp(frame.index[-1])
+    comparison_mask = (
+        (frame.index.year == latest_period.year - 1)
+        & (frame.index.month == latest_period.month)
+    )
+    if not comparison_mask.any():
+        return pd.DataFrame()
+
+    comparison_row = frame.loc[comparison_mask].iloc[-1]
+    latest_row = frame.iloc[-1]
+    columns = list(frame.columns)
+    try:
+        balance_start = columns.index("Dönen Varlıklar")
+        income_start = columns.index("Satış Gelirleri")
+    except ValueError:
+        return pd.DataFrame()
+    if income_start <= balance_start:
+        return pd.DataFrame()
+
+    balance_columns = columns[balance_start:income_start]
+    try:
+        total_assets_position = balance_columns.index("TOPLAM VARLIKLAR")
+    except ValueError:
+        return pd.DataFrame()
+
+    # Positional selection is intentional: the source data can contain duplicate
+    # labels such as short- and long-term "Finansal Borçlar".
+    previous_values = pd.to_numeric(
+        comparison_row.iloc[balance_start:income_start], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+    current_values = pd.to_numeric(
+        latest_row.iloc[balance_start:income_start], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+    previous_total_assets = previous_values.iloc[total_assets_position]
+    current_total_assets = current_values.iloc[total_assets_position]
+
+    def vertical_share(values: pd.Series, total_assets: Any) -> pd.Series:
+        try:
+            denominator = float(total_assets)
+        except (TypeError, ValueError):
+            denominator = float("nan")
+        if not np.isfinite(denominator) or denominator == 0:
+            return pd.Series(np.nan, index=values.index, dtype=float)
+        shares = values.astype(float).div(denominator).mul(100)
+        # The reference workbook leaves zero-weight rows blank.
+        return shares.mask(values.eq(0))
+
+    def period_label(period: pd.Timestamp) -> str:
+        return f"{period.year}/{period.month}"
+
+    def display_label(value: Any) -> str:
+        text = str(value)
+        indentation = len(text) - len(text.lstrip(" "))
+        return f"{'\u2003' * (indentation // 2)}{text.lstrip()}"
+
+    comparison_period = pd.Timestamp(frame.loc[comparison_mask].index[-1])
+    previous_label = period_label(comparison_period)
+    current_label = period_label(latest_period)
+    result = pd.DataFrame(
+        {
+            f"{previous_label} Tutar": previous_values.to_numpy(),
+            f"{previous_label} Pay (%)": vertical_share(
+                previous_values, previous_total_assets
+            ).to_numpy(),
+            f"{current_label} Tutar": current_values.to_numpy(),
+            f"{current_label} Pay (%)": vertical_share(
+                current_values, current_total_assets
+            ).to_numpy(),
+            "Değişim (%)": (
+                current_values.sub(previous_values)
+                .div(previous_values.abs().replace(0, np.nan))
+                .mul(100)
+            ).to_numpy(),
+        },
+        index=pd.Index([display_label(column) for column in balance_columns], name="Kalem"),
+    )
+    return result
+
+
+def _build_vertical_income_analysis(raw_financials: pd.DataFrame) -> pd.DataFrame:
+    """Compare cumulative income statements for the same quarter year over year."""
+    if not isinstance(raw_financials, pd.DataFrame) or raw_financials.empty:
+        return pd.DataFrame()
+
+    frame = raw_financials.copy()
+    parsed_index = pd.to_datetime(frame.index, errors="coerce")
+    valid_positions = np.flatnonzero(~pd.isna(parsed_index))
+    if not len(valid_positions):
+        return pd.DataFrame()
+
+    frame = frame.iloc[valid_positions].copy()
+    frame.index = pd.DatetimeIndex(parsed_index[valid_positions])
+    frame = frame.sort_index()
+    latest_period = pd.Timestamp(frame.index[-1])
+    comparison_mask = (
+        (frame.index.year == latest_period.year - 1)
+        & (frame.index.month == latest_period.month)
+    )
+    if not comparison_mask.any():
+        return pd.DataFrame()
+
+    columns = list(frame.columns)
+    try:
+        income_start = columns.index("Satış Gelirleri")
+        income_end = len(columns) - 1 - columns[::-1].index("Ana Ortaklık Payları")
+    except ValueError:
+        return pd.DataFrame()
+    if income_end < income_start:
+        return pd.DataFrame()
+
+    income_columns = columns[income_start : income_end + 1]
+    previous_row = frame.loc[comparison_mask].iloc[-1]
+    current_row = frame.iloc[-1]
+    previous_values = pd.to_numeric(
+        previous_row.iloc[income_start : income_end + 1], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+    current_values = pd.to_numeric(
+        current_row.iloc[income_start : income_end + 1], errors="coerce"
+    ).replace([np.inf, -np.inf], np.nan)
+    previous_sales = previous_values.iloc[0]
+    current_sales = current_values.iloc[0]
+
+    def sales_share(values: pd.Series, sales: Any) -> pd.Series:
+        try:
+            denominator = float(sales)
+        except (TypeError, ValueError):
+            denominator = float("nan")
+        if not np.isfinite(denominator) or denominator == 0:
+            return pd.Series(np.nan, index=values.index, dtype=float)
+        return values.astype(float).div(denominator).mul(100).mask(values.eq(0))
+
+    def period_label(period: pd.Timestamp) -> str:
+        return f"{period.year}/{period.month}"
+
+    comparison_period = pd.Timestamp(frame.loc[comparison_mask].index[-1])
+    previous_label = period_label(comparison_period)
+    current_label = period_label(latest_period)
+    return pd.DataFrame(
+        {
+            f"{previous_label} Tutar": previous_values.to_numpy(),
+            f"{previous_label} Pay (%)": sales_share(
+                previous_values, previous_sales
+            ).to_numpy(),
+            f"{current_label} Tutar": current_values.to_numpy(),
+            f"{current_label} Pay (%)": sales_share(
+                current_values, current_sales
+            ).to_numpy(),
+            # Reference workbook formula: current / previous - 1.
+            "Değişim (%)": (
+                current_values.div(previous_values.replace(0, np.nan)).sub(1).mul(100)
+            ).to_numpy(),
+        },
+        index=pd.Index([str(column).strip() for column in income_columns], name="Kalem"),
+    )
+
+
+def _vertical_analysis_to_html(df: pd.DataFrame, *, missing_message: str) -> str:
+    """Render vertical analysis without directional colour assumptions."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return dataframe_to_html(
+            pd.DataFrame(
+                {
+                    "Durum": [missing_message]
+                }
+            ),
+            index=False,
+        )
+    return dataframe_to_html(df)
 
 
 def _plot_rule_based_valuation(mod: Any, result: ValuationResult) -> None:
@@ -73,24 +357,24 @@ def _plot_rule_based_valuation(mod: Any, result: ValuationResult) -> None:
         go.Bar(
             x=methods.index.tolist(),
             y=methods["Baz Hedef"],
-            name="Yöntem Hedefi",
-            marker_color="#6DB432",
+            name="Yöntem Değerlemesi",
+            marker_color=ACCENT,
             text=[format_tr_number(value, 2, " TL") for value in methods["Baz Hedef"]],
             textposition="outside",
-            hovertemplate="%{x}<br>Hedef: %{y:,.2f} TL<extra></extra>",
+            hovertemplate="%{x}<br>Model değeri: %{y:,.2f} TL<extra></extra>",
         )
     )
     fig.add_hrect(
         y0=float(summary["Temkinli Hedef"]),
         y1=float(summary["İyimser Hedef"]),
-        fillcolor="rgba(109,180,50,0.15)",
+        fillcolor="rgba(110,173,80,0.20)",
         line_width=0,
         annotation_text="Temkinli–İyimser senaryo aralığı",
         annotation_position="top left",
     )
     fig.add_hline(
         y=float(summary["Ağırlıklı Hedef"]),
-        line_color="#ff6b6b",
+        line_color=DOWN_COLOR,
         line_dash="dash",
     )
     fig.add_annotation(
@@ -100,19 +384,23 @@ def _plot_rule_based_valuation(mod: Any, result: ValuationResult) -> None:
         yref="paper",
         xanchor="right",
         yanchor="top",
-        text=f"Ağırlıklı hedef fiyat: {format_tr_number(summary['Ağırlıklı Hedef'], 2, ' TL')}",
+        text=f"Model değerleme ortalaması: {format_tr_number(summary['Ağırlıklı Hedef'], 2, ' TL')}",
         showarrow=False,
-        bgcolor="rgba(31,31,33,0.82)",
-        bordercolor="#ff6b6b",
+        bgcolor="rgba(236,241,229,0.94)",
+        bordercolor=DOWN_COLOR,
         borderwidth=1,
         borderpad=6,
-        font={"color": "#f2f2f2", "size": 12},
+        font={"color": TEXT_COLOR, "size": 12},
     )
     fig.update_yaxes(title_text="Hisse Fiyatı (TL)", rangemode="tozero")
     apply_theme(
         fig,
         height=470,
-        title=f"İleri Değerleme — {summary['Değerleme Ufku']} | Güven: {summary['Veri Güveni']} {int(summary['Güven Puanı'])}/100",
+        title=(
+            "Model Bazlı Değerleme — "
+            f"{summary['Değerleme Ufku']} | Model yeterliliği: "
+            f"{summary['Veri Güveni']} {int(summary['Güven Puanı'])}/100"
+        ),
     )
     # Kısa yöntem adları (F/K, PD/DD…) yatay daha okunaklı.
     fig.update_xaxes(tickangle=0)
@@ -367,18 +655,18 @@ def _to_html(obj: Any) -> str:
 def _score_summary_html(total_score: Any, signal: str) -> str:
     """Toplam skor + sinyal için renkli HTML tablo üretir."""
     signal_colors = {
-        "Çok Güçlü": "#6DB432",
-        "Güçlü":     "#8BC064",
-        "Nötr":      "#f0c040",
-        "Zayıf":     "#ff8c42",
-        "Çok Zayıf": "#ff6b6b",
+        "Çok Güçlü": ACCENT,
+        "Güçlü":     ACCENT_H,
+        "Nötr":      "#56685B",
+        "Zayıf":     "#B00000",
+        "Çok Zayıf": DOWN_COLOR,
     }
     score_text = (
         f"{format_tr_number(total_score, 2)} / 100"
         if isinstance(total_score, (int, float)) and not pd.isna(total_score)
         else "—"
     )
-    color = signal_colors.get(signal, "#7B7B7D")
+    color = signal_colors.get(signal, "#56685B")
     return (
         '<table border="0" class="data-table">'
         "<thead><tr>"
@@ -386,7 +674,7 @@ def _score_summary_html(total_score: Any, signal: str) -> str:
         '<th style="text-align:left">Sinyal</th>'
         "</tr></thead>"
         "<tbody><tr>"
-        f'<td style="text-align:left;font-size:20px;font-weight:700;color:#f0f0f0">{score_text}</td>'
+        f'<td style="text-align:left;font-size:20px;font-weight:700;color:{TEXT_COLOR}">{score_text}</td>'
         f'<td style="text-align:left;font-size:16px;font-weight:700;color:{color}">{signal}</td>'
         "</tr></tbody>"
         "</table>"
@@ -397,17 +685,17 @@ def _piotroski_summary_html(score: Any, max_score: Any, eksik_kriter: Any) -> st
     """Piotroski F-Skoru özeti için renkli HTML tablo üretir."""
     if not isinstance(score, (int, float)) or pd.isna(score):
         score_text = "—"
-        color = "#7B7B7D"
+        color = "#56685B"
         note = "Hesaplanamadı (en az 5 dönemlik veri gerekli)"
     else:
         score_text = f"{int(score)} / {int(max_score)}"
         ratio = score / max_score if max_score else 0
         if ratio >= 0.75:
-            color = "#6DB432"
+            color = ACCENT
         elif ratio >= 0.5:
-            color = "#f0c040"
+            color = "#56685B"
         else:
-            color = "#ff6b6b"
+            color = DOWN_COLOR
         note = (
             f"{int(eksik_kriter)} kriter veri yetersizliğinden hesaplanamadı"
             if eksik_kriter
@@ -421,7 +709,7 @@ def _piotroski_summary_html(score: Any, max_score: Any, eksik_kriter: Any) -> st
         "</tr></thead>"
         "<tbody><tr>"
         f'<td style="text-align:left;font-size:20px;font-weight:700;color:{color}">{score_text}</td>'
-        f'<td style="text-align:left;font-size:13px;color:#9a9a9a">{note}</td>'
+        f'<td style="text-align:left;font-size:13px;color:#56685B">{note}</td>'
         "</tr></tbody>"
         "</table>"
     )
@@ -481,6 +769,8 @@ def run_company_analysis(
     try:
         financial_data_started = time.perf_counter()
         df_bilanco = mod.bilanco_cekme([hisse])
+        df_dikey_bilanco = _build_vertical_balance_analysis(df_bilanco)
+        df_dikey_gelir = _build_vertical_income_analysis(df_bilanco)
         gelir_tab_yil = mod.gelir_tablosu(df_bilanco, ceyrek=False, yillik=True)
         new_df = mod.bilanco_yillik(df_bilanco, gelir_tab_yil)
         df = mod.oran_rasyo_hesaplama(new_df, hisse, df_bilanco)
@@ -711,7 +1001,11 @@ def run_company_analysis(
         if degerleme == "EVET":
             forecast_started = time.perf_counter()
             try:
-                valuation_result = build_rule_based_valuation(df_bilanco, df)
+                valuation_result = build_rule_based_valuation(
+                    df_bilanco,
+                    df,
+                    valuation_date=pd.Timestamp.now(),
+                )
             except InsufficientValuationDataError as exc:
                 valuation_warning = f"{INSUFFICIENT_VALUATION_MESSAGE} Eksik koşul: {exc}"
                 financial_data_quality = valuation_warning
@@ -762,6 +1056,28 @@ def run_company_analysis(
             "name": "Bilanço Dengesi",
             "category": "bilanço",
             "html": dataframe_to_html(df_denge),
+        },
+        {
+            "name": "Dikey Bilanço Karşılaştırması",
+            "category": "dikey",
+            "html": _vertical_analysis_to_html(
+                df_dikey_bilanco,
+                missing_message=(
+                    "Son dönemle aynı çeyreğe ait bir önceki yıl bilançosu "
+                    "bulunamadığı için dikey bilanço analizi oluşturulamadı."
+                ),
+            ),
+        },
+        {
+            "name": "Dikey Gelir Tablosu Karşılaştırması",
+            "category": "dikey",
+            "html": _vertical_analysis_to_html(
+                df_dikey_gelir,
+                missing_message=(
+                    "Son dönemle aynı çeyreğe ait bir önceki yıl gelir tablosu "
+                    "bulunamadığı için dikey gelir analizi oluşturulamadı."
+                ),
+            ),
         },
         {
             "name": "Likidite ve Borç Ödeme Gücü",
@@ -815,9 +1131,11 @@ def run_company_analysis(
     if df_gelecek_donem is not None:
         tables.append(
             {
-                "name": "İleri Değerleme Özeti",
+                "name": "Model Bazlı Değerleme Özeti",
                 "category": "değerleme",
-                "html": dataframe_to_html(df_gelecek_donem),
+                "html": dataframe_to_html(
+                    _valuation_summary_for_display(df_gelecek_donem)
+                ),
             }
         )
     if valuation_result is not None:
@@ -825,7 +1143,9 @@ def run_company_analysis(
             {
                 "name": "Değerleme Yöntemleri ve Ağırlıkları",
                 "category": "değerleme",
-                "html": dataframe_to_html(valuation_result.methods),
+                "html": dataframe_to_html(
+                    _valuation_methods_for_display(valuation_result.methods)
+                ),
             }
         )
         tables.append(
@@ -861,6 +1181,11 @@ def run_company_analysis(
                 df_ceyreklik_gelir,
             ),
             "yil_sonu_degerleme_kpi": _valuation_kpi_summary(df_gelecek_donem),
+            "rapor_bilgisi": _report_metadata(
+                hisse,
+                df_bilanco,
+                valuation_created=valuation_result is not None,
+            ),
             "sureler_saniye": {
                 "toplam": round(total_seconds, 2),
                 "notebook_hazirlama": round(module_seconds, 2),

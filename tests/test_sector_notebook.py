@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from app.analysis_sector import _build_sector_financial_history
 from app.notebook_runtime import NotebookRuntime
 
 
@@ -96,6 +97,65 @@ class SectorNotebookTests(unittest.TestCase):
 
         self.assertEqual(result.attrs["successful_count"], 1)
         self.assertIn("BBB", result.attrs["failed_symbols"])
+
+    def test_sector_history_uses_fixed_latest_reporting_cohort(self):
+        dates = pd.date_range("2025-03-01", "2026-06-01", freq="QS-MAR")
+
+        def history(scale):
+            sales = pd.Series(np.arange(100.0, 100.0 + len(dates) * 10.0, 10.0), index=dates) * scale
+            return pd.DataFrame(
+                {
+                    "Satış Gelirleri": sales,
+                    "BRÜT KAR (ZARAR)": sales * 0.40,
+                    "Net Faaliyet Kar/Zararı": sales * 0.20,
+                    "FAVÖK": sales * 0.25,
+                    "Ana Ortaklık Payları": sales * 0.12,
+                },
+                index=dates,
+            )
+
+        histories = {
+            "AAA": history(1.0),
+            "BBB": history(2.0),
+            "CCC": history(3.0),
+            # DDD son dönemi açıklamadı ve çok büyük; eski dönemde toplamda
+            # bırakılırsa 2026/6'da sahte bir sektör düşüşü oluşturur.
+            "DDD": history(100.0).iloc[:-1],
+        }
+        histories["CCC"].loc["2026-06-01", "FAVÖK"] = np.nan
+        latest = {
+            "AAA": pd.Timestamp("2026-06-01"),
+            "BBB": pd.Timestamp("2026-06-01"),
+            "CCC": pd.Timestamp("2026-06-01"),
+            "DDD": pd.Timestamp("2026-03-01"),
+        }
+
+        bundle = _build_sector_financial_history(
+            histories,
+            latest,
+            requested_symbols=list(histories),
+        )
+
+        self.assertIsNotNone(bundle)
+        coverage = bundle["coverage"]
+        self.assertEqual(coverage["reference_period"], "2026/6")
+        self.assertEqual(coverage["reference_count"], 3)
+        self.assertEqual(coverage["observed_latest_missing"], {"DDD": "2026/3"})
+        expected_previous = sum(histories[s].loc["2026-03-01", "Satış Gelirleri"] for s in ("AAA", "BBB", "CCC"))
+        expected_latest = sum(histories[s].loc["2026-06-01", "Satış Gelirleri"] for s in ("AAA", "BBB", "CCC"))
+        self.assertAlmostEqual(
+            bundle["totals"].loc["2026-03-01", "Satış Gelirleri"],
+            expected_previous,
+        )
+        self.assertAlmostEqual(
+            bundle["differences"].loc["2026-06-01", "Satış Gelirleri"],
+            expected_latest - expected_previous,
+        )
+        self.assertAlmostEqual(
+            bundle["margins"].loc["2026-06-01", "FAVÖK Marjı %"],
+            25.0,
+        )
+        self.assertEqual(coverage["margin_coverage"]["FAVÖK Marjı %"], 2)
 
 
 if __name__ == "__main__":

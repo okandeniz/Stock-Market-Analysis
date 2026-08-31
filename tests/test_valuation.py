@@ -31,6 +31,7 @@ def _frames(last_period: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     ratios["F/K"] = np.linspace(8.0, 12.0, len(dates))
     ratios["PD/DD"] = np.linspace(1.2, 2.0, len(dates))
     ratios["FD/FAVÖK"] = np.linspace(5.0, 8.0, len(dates))
+    ratios["FD/NS"] = np.linspace(1.1, 1.9, len(dates))
     ratios["PD/NS"] = np.linspace(1.0, 1.8, len(dates))
     return cumulative, ratios
 
@@ -74,7 +75,7 @@ class RuleBasedValuationTests(unittest.TestCase):
         self.assertEqual(int(row["Hedef Yıl"]), 2026)
         self.assertEqual(int(row["Açıklanan Çeyrek"]), 0)
         self.assertEqual(int(row["Tahmin Edilen Çeyrek"]), 4)
-        self.assertEqual(result.summary.index[0], pd.Timestamp("2026-12-01"))
+        self.assertEqual(result.summary.index[0], pd.Timestamp("2026-12-31"))
         self.assertLessEqual(float(row["Temkinli Hedef"]), float(row["Ağırlıklı Hedef"]))
         self.assertGreaterEqual(float(row["İyimser Hedef"]), float(row["Ağırlıklı Hedef"]))
 
@@ -97,6 +98,66 @@ class RuleBasedValuationTests(unittest.TestCase):
         self.assertLess(float(result.methods.loc["F/K", "Baz Çarpan"]), 20.0)
         self.assertLess(float(result.methods.loc["F/K", "Çarpan Üst"]), 25.0)
         self.assertEqual(int(result.methods.loc["F/K", "Örnek Sayısı"]), 6)
+
+    def test_sales_method_uses_enterprise_value_to_sales_and_net_debt_bridge(self):
+        statements, ratios = _frames("2025-09-01")
+        result = build_rule_based_valuation(statements, ratios)
+
+        self.assertIn("FD/NS", result.methods.index)
+        self.assertNotIn("PD/NS", result.methods.index)
+        base = result.projection.loc["Baz"]
+        multiple = float(result.methods.loc["FD/NS", "Baz Çarpan"])
+        shares = float(ratios.iloc[-1]["  Ödenmiş Sermaye"])
+        expected = (float(base["Satış Gelirleri"]) * multiple - float(base["Net Borç"])) / shares
+        self.assertAlmostEqual(float(result.methods.loc["FD/NS", "Baz Hedef"]), expected)
+
+    def test_valuation_methods_use_only_company_history(self):
+        statements, ratios = _frames("2025-09-01")
+        result = build_rule_based_valuation(statements, ratios)
+
+        self.assertNotIn("Sektör Medyanı", result.methods.columns)
+        self.assertNotIn("Sektör Ağırlığı %", result.methods.columns)
+        self.assertNotIn("Sektör Emsali", result.summary.columns)
+        self.assertNotIn("Emsal Veri Tarihi", result.summary.columns)
+        self.assertNotIn("Sektör çıpası", result.data_quality)
+
+    def test_period_return_directly_drives_valuation_status(self):
+        statements, ratios = _frames("2025-09-01")
+        result = build_rule_based_valuation(
+            statements,
+            ratios,
+            valuation_date=pd.Timestamp("2025-09-30"),
+        )
+        row = result.summary.iloc[0]
+        self.assertIn("Hedef Dönem Getirisi %", row.index)
+        self.assertNotIn("Yıllık Gerekli Getiri %", row.index)
+        self.assertNotIn("Gerekli Dönem Getirisi %", row.index)
+        self.assertNotIn("Gerekli Getiriye Göre Fark %", row.index)
+        self.assertNotIn("Yıllıklandırılmış Hedef Fiyat Getirisi %", row.index)
+        expected_target_return = (
+            float(row["Ağırlıklı Hedef"]) / float(row["Güncel Fiyat"]) - 1.0
+        ) * 100.0
+        self.assertAlmostEqual(
+            float(row["Hedef Dönem Getirisi %"]),
+            expected_target_return,
+        )
+        target_period_return = expected_target_return / 100.0
+        expected_status = (
+            "iskontolu" if target_period_return >= 0.20 else
+            "az değerli" if target_period_return >= 0.10 else
+            "adil" if target_period_return >= -0.10 else
+            "biraz yüksek" if target_period_return >= -0.20 else
+            "pahalı"
+        )
+        self.assertEqual(row["Değerleme Görünümü"], expected_status)
+
+    def test_confidence_exposes_historical_validation_metrics(self):
+        statements, ratios = _frames("2025-12-01")
+        result = build_rule_based_valuation(statements, ratios)
+        row = result.summary.iloc[0]
+
+        self.assertGreaterEqual(int(row["Backtest Örnek Sayısı"]), 1)
+        self.assertTrue(np.isfinite(float(row["Backtest Medyan Mutlak Hata %"])))
 
 
 if __name__ == "__main__":

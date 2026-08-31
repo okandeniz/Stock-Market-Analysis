@@ -86,7 +86,6 @@ def api_company_run(payload: dict) -> dict:
             raise ValueError("hisse 1-10 ASCII harften oluşmalı (örn: THYAO)")
         if degerleme not in ("EVET", "HAYIR"):
             raise ValueError("degerleme EVET/HAYIR olmalı")
-
         out = run_company_analysis(
             project_root=PROJECT_ROOT,
             outputs_dir=OUTPUTS_DIR,

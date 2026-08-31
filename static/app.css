@@ -1,20 +1,21 @@
 /* ===== RENK PALETİ ===== */
 :root {
-  --bg:         #2a2a2c;
-  --bg-dark:    #1f1f21;
-  --card:       #353537;
-  --card-hover: #3d3d3f;
-  --sidebar:    #2e2e30;
-  --text:       #f0f0f0;
-  --muted:      #A9A9AF;
-  --accent:     #6DB432;
-  --accent-h:   #8BC064;
-  --accent-dim: rgba(109,180,50,.18);
-  --border:     rgba(255,255,255,.09);
-  --border-acc: rgba(109,180,50,.40);
-  --danger:     #ff6b6b;
-  --ok:         #6DB432;
-  --sticky-bg:  #353537;
+  --bg:           #ECF1E5;
+  --bg-dark:      #ECF1E5;
+  --card:         #FFFFFF;
+  --card-hover:   #E3ECD9;
+  --sidebar:      #F7FAF4;
+  --text:         #17341F;
+  --muted:        #56685B;
+  --accent:       #0D6628;
+  --accent-h:     #6EAD50;
+  --accent-dim:   rgba(110,173,80,.20);
+  --border:       rgba(13,102,40,.18);
+  --border-acc:   rgba(13,102,40,.45);
+  --danger:       #FF0000;
+  --ok:           #0D6628;
+  --sticky-bg:    #F7FAF4;
+  --surface-soft: #F7FAF4;
 }
 
 /* ===== RESET ===== */
@@ -82,9 +83,9 @@ body {
 }
 .main-tab:hover { border-color: var(--border-acc); color: var(--text); }
 .main-tab.active {
-  background: var(--accent-dim);
-  border-color: var(--border-acc);
-  color: var(--accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .panel { display: none; }
@@ -146,6 +147,18 @@ select:focus, input:focus {
 }
 .primary:hover { background: var(--accent); color: #fff; }
 .primary:disabled { opacity: .45; cursor: not-allowed; }
+
+.secondary {
+  padding: 10px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.secondary:hover { border-color: var(--border-acc); background: var(--surface-soft); }
 
 .status { font-size: 14px; line-height: 1.45; color: var(--muted); }
 .status.error { color: var(--danger); }
@@ -223,7 +236,7 @@ select:focus, input:focus {
 .data-table th,
 .data-table td {
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,.05);
+  border-bottom: 1px solid rgba(13,102,40,.10);
   text-align: right;
 }
 
@@ -242,7 +255,7 @@ select:focus, input:focus {
   top: 0;
   z-index: 3;
   background: var(--bg-dark);
-  border-bottom: 1px solid rgba(255,255,255,.12);
+  border-bottom: 1px solid rgba(13,102,40,.22);
 }
 
 /* ===== TÜM FROZEN TABLOLAR: İLK KOLON + BAŞLIK DONDURMA ===== */
@@ -351,8 +364,8 @@ select:focus, input:focus {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: rgba(0,0,0,.45);
-  color: var(--text);
+  background: rgba(13,102,40,.88);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -372,7 +385,7 @@ select:focus, input:focus {
   padding: 16px;
   border: 1px solid var(--border-acc);
   border-radius: 14px;
-  background: linear-gradient(135deg, rgba(109,180,50,.09), rgba(53,53,55,.96) 48%);
+  background: var(--card);
 }
 .valuation-kpi-heading {
   display: flex;
@@ -400,7 +413,7 @@ select:focus, input:focus {
   padding: 13px 14px;
   border: 1px solid var(--border);
   border-radius: 11px;
-  background: rgba(31,31,33,.76);
+  background: var(--surface-soft);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -420,15 +433,70 @@ select:focus, input:focus {
 }
 .valuation-kpi-card.is-accent .valuation-kpi-value,
 .valuation-kpi-card.is-positive .valuation-kpi-value {
-  color: var(--accent-h);
+  color: var(--accent);
 }
 .valuation-kpi-card.is-negative .valuation-kpi-value {
-  color: #ff7979;
+  color: var(--danger);
 }
 .valuation-kpi-card.is-status .valuation-kpi-value {
   font-size: 18px;
   text-transform: capitalize;
 }
+
+.report-metadata {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.report-metadata summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 750;
+}
+.report-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 13px;
+}
+.report-metadata-grid > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+.report-metadata dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+.report-metadata dd {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.report-metadata > p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.valuation-disclosure-placeholder {
+  padding: 22px;
+  border: 1px solid var(--border-acc);
+  border-radius: 14px;
+  background: var(--card);
+  text-align: center;
+}
+.valuation-disclosure-placeholder h3 { margin-bottom: 8px; font-size: 18px; }
+.valuation-disclosure-placeholder p { margin: 0 auto 16px; max-width: 720px; color: var(--muted); }
 
 /* ===== ŞİRKET ÖZET PANOSU ===== */
 .company-summary-dashboard {
@@ -436,7 +504,7 @@ select:focus, input:focus {
   padding: 18px;
   border: 1px solid var(--border-acc);
   border-radius: 16px;
-  background: linear-gradient(145deg, rgba(109,180,50,.06), rgba(31,31,33,.98) 34%);
+  background: linear-gradient(145deg, rgba(110,173,80,.16), #FFFFFF 36%);
 }
 .company-summary-header {
   display: flex;
@@ -467,7 +535,7 @@ select:focus, input:focus {
   padding: 5px 10px;
   border: 1px solid var(--border-acc);
   border-radius: 999px;
-  color: var(--accent-h);
+  color: var(--accent);
   font-size: 13px;
   font-weight: 700;
 }
@@ -503,7 +571,7 @@ select:focus, input:focus {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(53,53,55,.68);
+  background: #FFFFFF;
   overflow: hidden;
 }
 .summary-price-card { margin-bottom: 12px; }
@@ -551,8 +619,8 @@ select:focus, input:focus {
   color: var(--text);
   font-weight: 600;
 }
-.summary-change-positive { color: var(--accent-h); font-weight: 700; }
-.summary-change-negative { color: #ff7979; font-weight: 700; }
+.summary-change-positive { color: var(--accent); font-weight: 700; }
+.summary-change-negative { color: var(--danger); font-weight: 700; }
 .company-summary-quarterly {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -576,20 +644,20 @@ select:focus, input:focus {
 .summary-comparison-warning {
   margin-bottom: 12px;
   padding: 12px 14px;
-  border: 1px solid rgba(240,192,64,.32);
+  border: 1px solid rgba(255,0,0,.22);
   border-radius: 10px;
-  background: rgba(240,192,64,.08);
-  color: #f0c040;
+  background: rgba(255,0,0,.05);
+  color: #8B0000;
   font-size: 13px;
   line-height: 1.5;
 }
 .valuation-data-warning {
   margin: 0 0 16px;
   padding: 15px 17px;
-  border: 1px solid rgba(240,192,64,.38);
+  border: 1px solid rgba(255,0,0,.24);
   border-radius: 12px;
-  background: rgba(240,192,64,.09);
-  color: #f0c040;
+  background: rgba(255,0,0,.05);
+  color: #8B0000;
   line-height: 1.55;
 }
 .valuation-data-warning strong {
@@ -599,15 +667,44 @@ select:focus, input:focus {
 }
 .valuation-data-warning p {
   margin: 0;
-  color: #e8d79e;
+  color: #714545;
   font-size: 13px;
+}
+.sector-coverage-note {
+  margin: 0 0 16px;
+  padding: 15px 17px;
+  border: 1px solid rgba(13,102,40,.36);
+  border-radius: 12px;
+  background: rgba(110,173,80,.14);
+  color: var(--text);
+  line-height: 1.55;
+}
+.sector-coverage-note strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--accent);
+  font-size: 15px;
+}
+.sector-coverage-note p {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.sector-coverage-note details {
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 13px;
+}
+.sector-coverage-note summary {
+  cursor: pointer;
+  font-weight: 700;
 }
 
 /* ===== GRAFİK BÜYÜTME (ZOOM) MODALI ===== */
 .chart-zoom-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15,15,16,.86);
+  background: rgba(23,52,31,.72);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -624,7 +721,7 @@ select:focus, input:focus {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  box-shadow: 0 12px 40px rgba(13,102,40,.20);
   position: relative;
   display: flex;
   flex-direction: column;
@@ -683,7 +780,7 @@ select:focus, input:focus {
 }
 .hero-eyebrow {
   margin-bottom: 10px;
-  color: var(--accent-h);
+  color: var(--accent);
   font-size: 18px;
   font-weight: 800;
   letter-spacing: .12em;
@@ -695,9 +792,9 @@ select:focus, input:focus {
   font-size: 16px;
   line-height: 1.7;
 }
-.landing-hero strong { color: var(--accent-h); }
+.landing-hero strong { color: var(--accent); }
 .evds-guide-link {
-  color: var(--accent-h);
+  color: var(--accent);
   font-weight: 700;
   text-underline-offset: 3px;
 }
@@ -714,7 +811,7 @@ select:focus, input:focus {
   padding: 6px 11px;
   border: 1px solid var(--border-acc);
   border-radius: 999px;
-  background: rgba(109,180,50,.08);
+  background: rgba(110,173,80,.16);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -755,7 +852,7 @@ select:focus, input:focus {
   place-items: center;
   background: var(--accent-dim);
   border: 1px solid var(--border-acc);
-  color: var(--accent-h);
+  color: var(--accent);
   font-weight: 800;
 }
 .how-card h3,
@@ -788,7 +885,7 @@ select:focus, input:focus {
 .module-card > p { color: var(--muted); font-size: 15px; margin-bottom: 12px; line-height: 1.6; }
 .module-card ul { padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
 .module-card li { font-size: 14.5px; color: var(--text); line-height: 1.6; }
-.module-card li strong { color: var(--accent-h); }
+.module-card li strong { color: var(--accent); }
 
 .landing-section-title {
   font-size: 19px;
@@ -829,6 +926,88 @@ select:focus, input:focus {
 }
 .landing-footnote strong { color: var(--text); }
 
+.legal-center {
+  margin-top: 30px;
+  padding-top: 26px;
+  border-top: 1px solid var(--border);
+}
+.legal-center-intro {
+  max-width: 880px;
+  margin: -4px 0 16px 2px;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+.legal-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.legal-policy-grid details {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.legal-policy-grid summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 750;
+}
+.legal-policy-grid p {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.valuation-disclosure-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border-acc);
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(23,52,31,.28);
+}
+.valuation-disclosure-dialog::backdrop { background: rgba(23,52,31,.62); }
+.valuation-disclosure-content { padding: 24px; }
+.disclosure-eyebrow {
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+.valuation-disclosure-content h2 { margin-bottom: 14px; font-size: 23px; }
+.valuation-disclosure-content > p {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.mandatory-warning {
+  padding: 16px;
+  border: 1px solid var(--border-acc);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.mandatory-warning p {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.disclosure-report strong { color: var(--text); }
+.valuation-disclosure-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
 .trust-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -852,7 +1031,7 @@ select:focus, input:focus {
   place-items: center;
   border-radius: 9px;
   background: var(--accent-dim);
-  color: var(--accent-h);
+  color: var(--accent);
   font-size: 18px;
   font-weight: 800;
 }
@@ -861,7 +1040,7 @@ select:focus, input:focus {
   margin-bottom: 30px;
   border: 1px solid var(--border-acc);
   border-radius: 14px;
-  background: rgba(109,180,50,.06);
+  background: rgba(110,173,80,.12);
   overflow: hidden;
 }
 .sector-context-note summary {
@@ -882,7 +1061,7 @@ select:focus, input:focus {
   place-items: center;
   border-radius: 50%;
   background: var(--accent-dim);
-  color: var(--accent-h);
+  color: var(--accent);
   font-weight: 800;
 }
 .context-heading {
@@ -902,7 +1081,7 @@ select:focus, input:focus {
   line-height: 1.45;
 }
 .context-chevron {
-  color: var(--accent-h);
+  color: var(--accent);
   font-size: 22px;
   line-height: 1;
   transition: transform .18s ease;
@@ -940,13 +1119,13 @@ select:focus, input:focus {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 10px;
-  background: rgba(109, 180, 50, 0.06);
+  background: rgba(110,173,80,.12);
 }
 
 .info-note-title {
   font-size: 16px;
   font-weight: 700;
-  color: var(--accent-h);
+  color: var(--accent);
   margin-bottom: 6px;
 }
 
@@ -1148,6 +1327,14 @@ select:focus, input:focus {
   font-size: 13px;
   text-align: center;
 }
+.footer a {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+}
+.footer a:hover { text-decoration: underline; }
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 1024px) {
@@ -1182,12 +1369,13 @@ select:focus, input:focus {
   }
   .hint { display: none; }
   .valuation-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-metadata-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .company-summary-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .company-summary-kpi {
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: rgba(31,31,33,.62);
+    background: var(--surface-soft);
   }
   .company-summary-kpi:first-child { padding-left: 12px; }
   .company-summary-kpi:last-child { border-right: 1px solid var(--border); }
@@ -1210,6 +1398,11 @@ select:focus, input:focus {
   .valuation-kpi-grid { grid-template-columns: 1fr; }
   .valuation-kpi-card { padding: 12px; }
   .valuation-kpi-value { font-size: 18px; }
+  .report-metadata-grid,
+  .legal-policy-grid { grid-template-columns: 1fr; }
+  .valuation-disclosure-content { padding: 18px; }
+  .valuation-disclosure-actions { flex-direction: column-reverse; }
+  .valuation-disclosure-actions button { width: 100%; }
   .company-summary-dashboard { padding: 12px; }
   .company-summary-header { align-items: flex-start; }
   .company-summary-identity { align-items: flex-start; flex-direction: column; gap: 3px; }

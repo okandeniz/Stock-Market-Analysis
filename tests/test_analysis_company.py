@@ -4,13 +4,105 @@ import pandas as pd
 
 from app.analysis_company import (
     _build_company_summary,
+    _build_vertical_balance_analysis,
+    _build_vertical_income_analysis,
     _plot_rule_based_valuation,
     _valuation_kpi_summary,
+    _vertical_analysis_to_html,
 )
 from app.valuation import ValuationResult
 
 
 class CompanyAnalysisHelperTests(unittest.TestCase):
+    def test_vertical_balance_analysis_compares_same_quarter_yoy(self):
+        index = pd.to_datetime(
+            ["2025-03-01", "2025-06-01", "2025-09-01", "2025-12-01", "2026-03-01"]
+        )
+        raw = pd.DataFrame(
+            [
+                [60, 10, 100, 40, 100, 20],
+                [70, 15, 120, 50, 120, 30],
+                [80, 20, 140, 60, 140, 40],
+                [90, 25, 160, 70, 160, 50],
+                [150, 30, 200, 20, 200, 80],
+            ],
+            columns=[
+                "Dönen Varlıklar",
+                "  Finansal Borçlar",
+                "TOPLAM VARLIKLAR",
+                "  Finansal Borçlar",
+                "TOPLAM KAYNAKLAR",
+                "Satış Gelirleri",
+            ],
+            index=index,
+        )
+
+        result = _build_vertical_balance_analysis(raw)
+
+        self.assertEqual(
+            list(result.columns),
+            [
+                "2025/3 Tutar",
+                "2025/3 Pay (%)",
+                "2026/3 Tutar",
+                "2026/3 Pay (%)",
+                "Değişim (%)",
+            ],
+        )
+        self.assertEqual(result.loc["Dönen Varlıklar", "2025/3 Tutar"], 60)
+        self.assertEqual(result.loc["Dönen Varlıklar", "2026/3 Tutar"], 150)
+        self.assertEqual(result.loc["Dönen Varlıklar", "2025/3 Pay (%)"], 60)
+        self.assertEqual(result.loc["Dönen Varlıklar", "2026/3 Pay (%)"], 75)
+        self.assertEqual(result.loc["Dönen Varlıklar", "Değişim (%)"], 150)
+        self.assertEqual(sum(result.index == "\u2003Finansal Borçlar"), 2)
+
+        html = _vertical_analysis_to_html(result, missing_message="Eksik bilanço")
+        self.assertNotIn("change-positive", html)
+        self.assertNotIn("change-negative", html)
+        self.assertIn("150,00", html)
+
+    def test_vertical_balance_analysis_requires_same_quarter_prior_year(self):
+        raw = pd.DataFrame(
+            {
+                "Dönen Varlıklar": [60, 80],
+                "TOPLAM VARLIKLAR": [100, 120],
+                "TOPLAM KAYNAKLAR": [100, 120],
+                "Satış Gelirleri": [20, 30],
+            },
+            index=pd.to_datetime(["2025-06-01", "2026-03-01"]),
+        )
+
+        self.assertTrue(_build_vertical_balance_analysis(raw).empty)
+        self.assertIn(
+            "Eksik bilanço",
+            _vertical_analysis_to_html(pd.DataFrame(), missing_message="Eksik bilanço"),
+        )
+
+    def test_vertical_income_analysis_uses_sales_as_vertical_base(self):
+        raw = pd.DataFrame(
+            {
+                "Dönen Varlıklar": [100, 130],
+                "TOPLAM VARLIKLAR": [200, 260],
+                "TOPLAM KAYNAKLAR": [200, 260],
+                "Satış Gelirleri": [100, 150],
+                "Satışların Maliyeti (-)": [-60, -75],
+                "BRÜT KAR (ZARAR)": [40, 75],
+                "Ana Ortaklık Payları": [10, 30],
+                " İşletme Faaliyetlerinden Kaynaklanan Net Nakit": [5, 20],
+            },
+            index=pd.to_datetime(["2025-06-01", "2026-06-01"]),
+        )
+
+        result = _build_vertical_income_analysis(raw)
+
+        self.assertEqual(result.index[0], "Satış Gelirleri")
+        self.assertEqual(result.index[-1], "Ana Ortaklık Payları")
+        self.assertNotIn("İşletme Faaliyetlerinden Kaynaklanan Net Nakit", result.index)
+        self.assertEqual(result.loc["Satış Gelirleri", "2026/6 Pay (%)"], 100)
+        self.assertEqual(result.loc["BRÜT KAR (ZARAR)", "2025/6 Pay (%)"], 40)
+        self.assertEqual(result.loc["BRÜT KAR (ZARAR)", "2026/6 Pay (%)"], 50)
+        self.assertEqual(result.loc["Satışların Maliyeti (-)", "Değişim (%)"], 25)
+
     def test_weighted_target_label_is_fixed_to_plot_top_right(self):
         class DummyModule:
             figure = None
@@ -48,7 +140,7 @@ class CompanyAnalysisHelperTests(unittest.TestCase):
         target_note = next(
             annotation
             for annotation in module.figure.layout.annotations
-            if "Ağırlıklı hedef fiyat" in annotation.text
+            if "Model değerleme ortalaması" in annotation.text
         )
         self.assertEqual(target_note.xref, "paper")
         self.assertEqual(target_note.yref, "paper")
@@ -64,6 +156,7 @@ class CompanyAnalysisHelperTests(unittest.TestCase):
                 "Temkinli Hedef": [46.94],
                 "İyimser Hedef": [55.77],
                 "Hedef Potansiyeli %": [15.19],
+                "Hedef Dönem Getirisi %": [15.19],
                 "Veri Güveni": ["Orta"],
                 "Güven Puanı": [68],
                 "Değerleme Görünümü": ["az değerli"],
@@ -77,6 +170,7 @@ class CompanyAnalysisHelperTests(unittest.TestCase):
         self.assertEqual(summary["current_price"], 44.54)
         self.assertEqual(summary["average_target"], 51.31)
         self.assertEqual(summary["upside_pct"], 15.19)
+        self.assertEqual(summary["target_period_return_pct"], 15.19)
         self.assertEqual(summary["scenario_low"], 46.94)
         self.assertEqual(summary["confidence"], "Orta")
         self.assertEqual(summary["status"], "az değerli")

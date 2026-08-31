@@ -3,9 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ECF1E5" />
     <title>Finansal Mercek</title>
     <link rel="icon" type="image/png" href="/static/assets/finansal-mercek-logo-v2.png" />
-    <link rel="stylesheet" href="/static/app.css?v=20260805-valuation-data-guard" />
+    <link rel="stylesheet" href="/static/app.css?v=20260831-compliance" />
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
   </head>
   <body>
@@ -147,7 +148,7 @@
           <div class="feature-card">
             <div class="feature-icon">📊</div>
             <h3>Değerleme</h3>
-            <p>Hisse kendi geçmişine göre pahalı mı; temkinli, baz ve iyimser senaryolar ne söylüyor?</p>
+            <p>Piyasa fiyatı şirketin geçmişinden üretilen temkinli, baz ve iyimser model değerlerinin neresinde kalıyor?</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon">🏆</div>
@@ -169,7 +170,7 @@
             <div class="trust-icon">≈</div>
             <div>
               <h3>Tahminler kesin sonuç değildir</h3>
-              <p>Senaryolar geçmiş mevsimsellik, marj ve çarpan dağılımlarına dayanır. Sonuçlar fiyat garantisi veya yatırım tavsiyesi değildir.</p>
+              <p>Senaryolar geçmiş mevsimsellik, marj ve çarpan dağılımlarına dayanır. Model değerleri bir fiyat veya getiri garantisi oluşturmaz.</p>
             </div>
           </div>
         </div>
@@ -201,9 +202,48 @@
         </details>
 
         <div class="landing-footnote">
-          <strong>Önemli:</strong> Karar vermeden önce şirket açıklamalarını, bağımsız denetim raporlarını
-          ve güncel piyasa koşullarını ayrıca değerlendirin.
+          <strong>Önemli:</strong> Platform kişisel mali durumunuzu, portföyünüzü, yatırım sürenizi veya
+          risk tercihlerinizi değerlendirmez. Karar vermeden önce şirket açıklamalarını, bağımsız denetim
+          raporlarını ve güncel piyasa koşullarını ayrıca inceleyin.
         </div>
+
+        <section id="yasal-bilgilendirme" class="legal-center" aria-labelledby="legal-center-title">
+          <h2 id="legal-center-title" class="landing-section-title">Yasal ve metodolojik bilgilendirme</h2>
+          <p class="legal-center-intro">
+            Finansal Mercek, aynı veri ve metodoloji sürümünde bütün kullanıcılara aynı sonucu üreten,
+            kişiselleştirilmemiş bir finansal analiz aracıdır.
+          </p>
+          <div class="legal-policy-grid">
+            <details>
+              <summary>Hizmetin kapsamı</summary>
+              <p>Uygulama; kullanıcının geliri, portföyü, yatırım amacı, yatırım süresi veya risk ve getiri tercihleri üzerinden öneri üretmez.</p>
+              <p>Model çıktıları al, sat veya tut talimatı değildir; emir iletimi, portföy yönetimi veya kişiye özel yatırım danışmanlığı sunulmaz.</p>
+            </details>
+            <details>
+              <summary>Tahmin ve değerleme ilkeleri</summary>
+              <p>Model değerleri şirketin geçmiş finansal verileri, çarpanları ve açıklanan varsayımlar kullanılarak hesaplanır. Tek bir sonuç yerine temkinli, baz ve iyimser senaryolar birlikte gösterilir.</p>
+              <p>Her raporda veri dönemi, oluşturulma zamanı, kaynak, metodoloji sürümü ve rapor kimliği açıklanır.</p>
+            </details>
+            <details>
+              <summary>Güncelleme ve düzeltme politikası</summary>
+              <p>Analizler kullanıcı tarafından yeniden çalıştırıldığında erişilebilen son verilerle yeni bir rapor oluşturulur. Veri veya hesaplama hatası tespit edilirse sonuç yeni rapor kimliği ve metodoloji sürümüyle yeniden yayımlanır.</p>
+            </details>
+            <details>
+              <summary>Çıkar çatışmaları ve sponsorlu içerik</summary>
+              <p>Analiz edilen şirketle ücret, reklam, sponsorluk veya başka bir ticari ilişki bulunması ya da içeriği hazırlayanların önemli finansal çıkarı olması halinde bu durum ilgili raporda açıkça belirtilmelidir.</p>
+              <p>Sponsorlu içerik, bağımsız model çıktısından açık bir etiketle ayrılmalıdır.</p>
+            </details>
+            <details>
+              <summary>Veri kaynakları ve gecikme riski</summary>
+              <p>Finansal tablolar İş Yatırım, fiyat verileri Yahoo Finance üzerinden alınır. Kaynaklara erişim, veri gecikmesi, eksik dönemler ve kurumsal işlem düzeltmeleri sonuçları etkileyebilir.</p>
+              <p>Ticari yayından önce veri gösterimi, yeniden dağıtım, gösterimsiz kullanım ve türetilmiş veri lisanslarının işletmeci tarafından ayrıca doğrulanması gerekir.</p>
+            </details>
+            <details>
+              <summary>Ticari yayın öncesi hukuki kontrol</summary>
+              <p>Bu bilgilendirmeler kullanıcı şeffaflığı sağlar; hukuki görüş veya faaliyet izni yerine geçmez. Ticari yayından önce zorunlu SPK uyarı metni, kullanıcı sözleşmesi, KVKK metinleri ve işletmeci bilgileri sermaye piyasası hukukçusuyla tamamlanmalıdır.</p>
+            </details>
+          </div>
+        </section>
       </section>
 
       <!-- =================== SEKTÖR PANELİ =================== -->
@@ -250,6 +290,7 @@
             <button class="pill sm active" data-img-filter="all">Tümü</button>
             <button class="pill sm" data-img-filter="bar">Bar Grafikler</button>
             <button class="pill sm" data-img-filter="heatmap">Isı Haritası</button>
+            <button class="pill sm" data-img-filter="sector_financials">Sektör Finansalları</button>
           </div>
         </div>
 
@@ -269,7 +310,7 @@
             <label>
               <span>Yıl Sonu Değerlemesi Yapılsın mı?</span>
               <select id="company-degerleme"></select>
-              <small class="field-help">Ara dönemlerde cari yıl sonu, Aralık bilançosunda sonraki yıl sonu için senaryo tabanlı değerleme yapılır.</small>
+              <small class="field-help">İsteğe bağlı modelleme herkese aynı kurallarla uygulanır; kişisel portföy veya risk tercihi kullanılmaz.</small>
             </label>
           </div>
           <div class="actions">
@@ -295,6 +336,7 @@
               <button class="cat-btn" data-cat="karlılık">Karlılık</button>
               <button class="cat-btn" data-cat="dupont">DuPont</button>
               <button class="cat-btn" data-cat="bilanço">Bilanço</button>
+              <button class="cat-btn" data-cat="dikey">Dikey Analiz</button>
               <button class="cat-btn" data-cat="likidite">Likidite</button>
               <button class="cat-btn" data-cat="verimlilik">Verimlilik</button>
               <button class="cat-btn" data-cat="nakit">Nakit Akışı</button>
@@ -310,8 +352,35 @@
     </main>
 
     <footer class="footer">
-      <div>Finansal Mercek • Veriler otomatik hazırlanır • Sonuçlar yatırım tavsiyesi değildir</div>
+      <div>Finansal Mercek • Kişiselleştirilmemiş finansal analiz ve modelleme aracı</div>
+      <a href="#yasal-bilgilendirme" data-goto-tab="giris">Yasal ve metodolojik bilgilendirme</a>
     </footer>
+
+    <dialog id="valuation-disclosure-dialog" class="valuation-disclosure-dialog" aria-labelledby="valuation-disclosure-title">
+      <div class="valuation-disclosure-content">
+        <div class="disclosure-eyebrow">MODEL BAZLI FİNANSAL ANALİZ</div>
+        <h2 id="valuation-disclosure-title">Sonuçları görüntülemeden önce</h2>
+        <div class="mandatory-warning">
+          <p>
+            Burada yer alan yatırım bilgi, yorum ve tavsiyeleri yatırım danışmanlığı kapsamında değildir.
+            Yatırım danışmanlığı hizmeti; yetkili kuruluşlar ile müşteri arasında imzalanacak yatırım
+            danışmanlığı sözleşmesi çerçevesinde sunulmaktadır. Buradaki görüş ve sonuçlar mali durumunuz
+            ile risk ve getiri tercihlerinize uygun olmayabilir. Yalnızca burada yer alan bilgilere
+            dayanılarak yatırım kararı verilmesi beklentilerinize uygun sonuçlar doğurmayabilir.
+          </p>
+        </div>
+        <p>
+          Finansal Mercek kişisel portföyünüzü, yatırım amacınızı, yatırım sürenizi veya risk tercihlerinizi
+          değerlendirmez. Gösterilecek tutarlar geçmiş verilere ve varsayımlara dayalı model sonuçlarıdır;
+          herhangi bir fiyatın veya getirinin gerçekleşeceğini garanti etmez.
+        </p>
+        <p class="disclosure-report">Rapor kimliği: <strong data-disclosure-report-id>—</strong></p>
+        <div class="valuation-disclosure-actions">
+          <button type="button" id="valuation-disclosure-back" class="secondary">Özete Dön</button>
+          <button type="button" id="valuation-disclosure-accept" class="primary">Okudum, Raporu Görüntüle</button>
+        </div>
+      </div>
+    </dialog>
 
     <!-- Grafik büyütme (zoom) modalı -->
     <div id="chart-zoom-overlay" class="chart-zoom-overlay hidden">
@@ -322,6 +391,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260805-valuation-math-note"></script>
+    <script src="/static/app.js?v=20260831-compliance"></script>
   </body>
 </html>

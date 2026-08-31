@@ -6,13 +6,20 @@ const state = {
     data: null,          // { tables, charts, meta }
     mode: "table",       // "table" | "image"
     imgFilter: "all",    // "all" | "bar" | "heatmap"
+    disclosureAccepted: false,
   },
   company: {
     data: null,
     mode: "table",       // "table" | "image"
     category: "özet",    // active category key
+    valuationAcceptedReports: new Set(),
+  },
+  disclosure: {
+    pendingAction: null,
   },
 };
+
+const VALUATION_DISCLOSURE_VERSION = "2026-08-31-v1";
 
 /* ============================================================
    CATEGORY → TABLE/IMAGE MAPPING  (Şirket Analizi)
@@ -23,10 +30,11 @@ const COMPANY_TABLE_MAP = {
   "karlılık":  ["Kârlılık ve Satış Yapısı"],
   "dupont":    ["DuPont Analizi"],
   "bilanço":   ["Bilanço Dengesi"],
+  "dikey":     ["Dikey Bilanço Karşılaştırması", "Dikey Gelir Tablosu Karşılaştırması"],
   "likidite":  ["Likidite ve Borç Ödeme Gücü"],
   "verimlilik":["Nakit Döngüsü"],
   "nakit":     ["Nakit Akımı"],
-  "değerleme": ["Çarpanlar", "İleri Değerleme Özeti", "Değerleme Yöntemleri ve Ağırlıkları", "Finansal Projeksiyon Senaryoları", "Değerleme Varsayımları"],
+  "değerleme": ["Çarpanlar", "Model Bazlı Değerleme Özeti", "Değerleme Yöntemleri ve Ağırlıkları", "Finansal Projeksiyon Senaryoları", "Değerleme Varsayımları"],
   "skor":      ["Toplam Skor", "Skor Kartı (Kategori Skorları)", "Piotroski F-Skoru", "Piotroski F-Skoru Detayı"],
 };
 
@@ -76,9 +84,20 @@ const COMPANY_INFO_NOTES = {
     title: "Bilanço ne söylüyor?",
     text: [
       "Bu bölüm şirketin varlıklarını borçla mı, özkaynakla mı finanse ettiğini ve günlük faaliyetleri için yeterli işletme sermayesi bulunup bulunmadığını gösterir.",
+      "Dikey bilanço karşılaştırması son açıklanan dönemi bir yıl önceki aynı mali çeyrekle karşılaştırır. Her kalemin Pay (%) değeri, ilgili dönem tutarının o dönemin Toplam Varlıklar tutarına bölünmesiyle hesaplanır; böylece bilançonun yapısındaki değişim şirket ölçeğinden bağımsız izlenebilir.",
       "Borçlar satış ve FAVÖK'ten daha hızlı büyüyorsa finansal risk artabilir. Varlık büyümesini tek başına olumlu kabul etmeyin; büyümenin nasıl finanse edildiğine de bakın.",
     ],
     source: "Yöntem kaynakları: IAS 1; Brealey, Myers & Allen (2020).",
+  },
+  "dikey": {
+    title: "Dikey bilanço analizi nasıl okunmalı?",
+    text: [
+      "Tablo son açıklanan dönemi bir yıl önceki aynı mali çeyrekle karşılaştırır. Her kalemin Pay (%) değeri, ilgili dönem tutarının o dönemin Toplam Varlıklar tutarına bölünmesiyle hesaplanır.",
+      "Gelir tablosunda Pay (%) değeri ilgili kalemin aynı dönemdeki Satış Gelirlerine oranıdır. Ara dönem tutarları şirketin açıkladığı kümülatif 3-6-9 aylık değerlerdir; çeyreklik tek dönem değerleri değildir.",
+      "Bilanço değişimi yönü doğru korumak için (cari − önceki) / |önceki| × 100; gelir tablosu değişimi ise referans Excel gibi (cari / önceki − 1) × 100 formülüyle hesaplanır. Gelir ve gider kalemlerinin ekonomik anlamı farklı olabildiği için değişim hücrelerinde yön rengi kullanılmaz; önceki değer sıfırsa — gösterilir.",
+      "Pay sütunlarını birlikte okuyarak yalnızca tutar değişimini değil, ilgili kalemin bilanço veya gelir tablosu içindeki ağırlığının değişip değişmediğini de değerlendirin.",
+    ],
+    source: "Karşılaştırma yöntemi: aynı mali çeyreğin yıllık değişimi ve toplam varlıklara göre dikey analiz.",
   },
   "likidite": {
     title: "Kısa vadeli ödeme gücü yeterli mi?",
@@ -109,12 +128,13 @@ const COMPANY_INFO_NOTES = {
     {
       title: "Değerleme sonuçlarını nasıl kullanmalıyım?",
       text: [
-        "F/K, FD/FAVÖK, PD/DD ve benzeri çarpanlar mevcut fiyatı şirketin kârı, nakit yaratma gücü veya defter değeriyle karşılaştırır.",
-        "Düşük çarpan tek başına ucuzluk anlamına gelmez. Şirketi önce kendi geçmişiyle, sonra benzer iş modeline sahip şirketlerle karşılaştırın; büyüme, borç ve kârlılık farklarını dikkate alın.",
-        "Tahminler kesin fiyat hedefi değildir. Ağırlıklı hedefi temkinli ve iyimser senaryo aralığıyla, ayrıca veri güven puanıyla birlikte okuyun.",
+        "F/K, FD/FAVÖK, PD/DD ve FD/NS çarpanları mevcut fiyatı şirketin kârı, faaliyet performansı, defter değeri veya satışlarıyla karşılaştırır.",
+        "Düşük çarpan tek başına olumlu bir yatırım sonucu anlamına gelmez. Model yalnız şirketin kendi geçmiş verilerini standart kurallarla işler; kullanıcının portföyü, mali durumu, yatırım süresi veya risk tercihleri hesaba katılmaz.",
+        "Model değerleri kesin fiyat hedefi değildir. Model değerleme ortalamasını temkinli ve iyimser senaryo aralığıyla, ayrıca veri ve model yeterlilik puanıyla birlikte okuyun.",
         "Mart, Haziran ve Eylül dönemlerinde açıklanan yıl içi satışlar geçmiş yıllardaki aynı dönem/yıl payıyla tamamlanır. Net kâr ve FAVÖK, cari marjlarla sağlamlaştırılmış tarihsel medyanların birleşiminden türetilir.",
         "Aralık bilançosu açıklandığında cari yıl yeniden tahmin edilmez; geçmiş yıllık büyüme, marj ve net borç dağılımlarından sonraki Aralık için 12 aylık ileri projeksiyon hazırlanır.",
-        "F/K, PD/DD, FD/FAVÖK ve PD/NS hedefleri eşit ortalanmaz. Yeterli ve istikrarlı tarihsel gözleme sahip yöntem daha yüksek güven ağırlığı alır; zarar veya negatif FAVÖK nedeniyle anlamsızlaşan yöntem hesaplamadan çıkarılır.",
+        "F/K, PD/DD, FD/FAVÖK ve FD/NS yöntemleri eşit ortalanmaz. Her çarpan yalnız şirketin kendi son altı geçerli döneminden sağlamlaştırılarak hesaplanır; sektör medyanı veya sektör çıpası kullanılmaz. Zarar veya negatif FAVÖK nedeniyle anlamsızlaşan yöntem hesaplamadan çıkarılır.",
+        "Piyasa fiyatına göre model farkı, model değerleme ortalaması ile analiz sırasında kullanılan fiyat arasındaki matematiksel farktır. Temettü dahil değildir ve bu ölçü alım, satım veya tutma önerisi oluşturmaz.",
       ],
       source: "Yöntem kaynağı: Damodaran, Damodaran on Valuation (2006).",
     },
@@ -122,11 +142,20 @@ const COMPANY_INFO_NOTES = {
       title: "İleri değerleme matematiksel olarak nasıl hesaplanıyor?",
       text: [
         "Önce temkinli, baz ve iyimser finansal senaryolar kurulur. Net kâr = tahmini satış × net kâr marjı; FAVÖK = tahmini satış × FAVÖK marjı; net borç = tahmini FAVÖK × Net Borç/FAVÖK oranı olarak hesaplanır. Ara dönemde özkaynağa yalnızca henüz açıklanmamış dönemlerin tahmini kârı eklenir.",
-        "Her senaryoda dört ayrı hedef fiyat üretilir: F/K hedefi = (tahmini net kâr / ödenmiş sermaye) × tarihsel F/K; PD/DD hedefi = (tahmini özkaynak / ödenmiş sermaye) × tarihsel PD/DD; FD/FAVÖK hedefi = (tahmini FAVÖK × tarihsel FD/FAVÖK − tahmini net borç) / ödenmiş sermaye; PD/NS hedefi = (tahmini satış / ödenmiş sermaye) × tarihsel PD/NS.",
-        "Tarihsel çarpanlarda uç değerlerin etkisi sınırlandırılır ve medyan baz çarpan olarak alınır. Her yöntemin ham ağırlığı; yöntem önem katsayısı × min(gözlem sayısı / 8, 1) ÷ (1 + çarpan dağılımının göreli açıklığı) formülüyle bulunur. Ham ağırlıklar toplamı %100 olacak şekilde normalize edilir.",
-        "Ağırlıklı hedef fiyat = Σ(yöntem hedefi × normalize edilmiş yöntem ağırlığı) formülüdür. Temkinli ve iyimser hedefler de aynı ağırlıklarla ayrı ayrı hesaplanır. Hedef potansiyeli = (ağırlıklı hedef / güncel fiyat − 1) × 100'dür. Güven puanında gözlem sayısı %20, finansal geçmiş %20, projeksiyon girdisi %15 ve senaryo aralığının darlığı %45 ağırlık taşır.",
+        "Her senaryoda dört ayrı model değeri üretilir: F/K değeri = (tahmini net kâr / pay adedi) × F/K; PD/DD değeri = (tahmini özkaynak / pay adedi) × PD/DD; FD/FAVÖK değeri = (tahmini FAVÖK × FD/FAVÖK − tahmini net borç) / pay adedi; FD/NS değeri = (tahmini satış × FD/NS − tahmini net borç) / pay adedi.",
+        "Şirket baz çarpanı yalnız şirketin son altı geçerli döneminden hesaplanır; son gözleme %65, şirket medyanına %35 ağırlık verir ve şirket geçmişinin %10–%90 sınırlarında tutulur. Yöntem ağırlığında gözlem sayısı, dağılım açıklığı ve son çarpanın şirket medyanından uzaklığı birlikte kullanılır.",
+        "Model değerleme ortalaması = Σ(yöntem baz senaryo değeri × normalize edilmiş yöntem ağırlığı) formülüdür. Piyasa fiyatına göre model farkı, bu ortalama ile analiz sırasında kullanılan fiyat arasındaki değişimdir. Yeterlilik puanında geçmiş model değerlerinin gerçekleşen fiyatlara karşı medyan mutlak hatası %35, senaryo genişliği %25, gözlem sayısı %15, finansal geçmiş %15 ve projeksiyon girdisi %10 ağırlık taşır. Geçmiş doğrulama yoksa yeterlilik puanı yüksek seviyeye çıkamaz.",
       ],
       source: "Uygulama yöntemi: sağlamlaştırılmış tarihsel çarpanlar, finansal senaryolar ve güven ağırlıklı birleşim.",
+    },
+    {
+      title: "Rapor kapsamı, güncelleme ve düzeltme ilkeleri",
+      text: [
+        "Her rapor; analiz zamanı, finansal dönem, veri kaynakları, metodoloji sürümü ve benzersiz rapor kimliğiyle yayımlanır. Yeni veriyle yeniden çalıştırılan analiz yeni bir rapor olarak değerlendirilir.",
+        "Veri veya hesaplama hatası tespit edildiğinde sonuç sessizce değiştirilmez; güncel veri ve metodoloji sürümüyle yeni rapor üretilir. Veri kaynağına erişim, gecikme, eksik dönem ve kurumsal işlem düzeltmeleri sonuçları etkileyebilir.",
+        "Analiz edilen şirketten alınan ücret, sponsorluk, reklam ilişkisi veya içerik hazırlayanların önemli finansal çıkarı bulunması halinde bu durum ilgili raporda ayrıca açıklanmalıdır.",
+      ],
+      source: "Politika: kişiselleştirilmemiş, sürümlü ve kaynakları açıklanan model raporu.",
     },
   ],
   "skor": {
@@ -145,7 +174,7 @@ const SECTOR_INFO_NOTES = {
     title: "Karşılaştırma tablosuna nereden başlamalıyım?",
     text: [
       "Önce şirketlerin ölçek, kârlılık ve borçluluk farklarını karşılaştırın; ardından değerleme çarpanlarına geçin. Toplam analizi sektörün birleşik büyüklüğünü, medyan analizi ise uç değerlerden daha az etkilenen tipik şirketi referans alır.",
-      "Tahmini fiyat ve iskonto oranı seçilen sektör referansına göre hesaplanır. Düşük çarpan veya yüksek iskonto tek başına fırsat anlamına gelmez; büyüme, bilanço kalitesi ve şirket özelindeki risklerle birlikte değerlendirin.",
+      "Sektör referanslı model değeri ve piyasa fiyatına göre model farkı seçilen TOPLAM veya MEDIAN referansıyla hesaplanır. Bu sonuçlar kişisel koşulları değerlendirmez ve tek başına yatırım kararı veya fırsat göstergesi oluşturmaz.",
       "Piotroski seçeneği açıksa finansal güç skoru da tabloya eklenir ve analiz biraz daha uzun sürebilir.",
     ],
     source: "Yöntem kaynağı: Damodaran, Damodaran on Valuation (2006).",
@@ -154,7 +183,7 @@ const SECTOR_INFO_NOTES = {
     title: "Sıralama grafiklerini nasıl okumalıyım?",
     text: [
       "Grafikler şirketleri piyasa değeri, satış, FAVÖK ve benzeri büyüklüklere göre sıralar. Böylece sektör liderlerini ve ölçek farklarını hızlıca görebilirsiniz.",
-      "Büyük şirket her zaman daha kârlı veya daha ucuz değildir. Sıralamayı marjlar, borçluluk ve değerleme tablosuyla birlikte okuyun.",
+      "Büyük şirket her zaman daha kârlı veya piyasa fiyatı model referansına daha yakın değildir. Sıralamayı marjlar, borçluluk ve değerleme tablosuyla birlikte okuyun.",
     ],
     source: "Yöntem kaynağı: Damodaran (2006).",
   },
@@ -165,6 +194,15 @@ const SECTOR_INFO_NOTES = {
       "Düşük değerleme çarpanları ve yüksek kârlılık oranları genellikle olumlu görünür. Yine de sıra dışı değerlerde borç, tek seferlik gelir ve veri kalitesini kontrol edin.",
     ],
     source: "Yöntem kaynakları: Damodaran (2006); Piotroski (2000).",
+  },
+  "sector_financials": {
+    title: "Sektör finansal grafiklerini nasıl okumalıyım?",
+    text: [
+      "Yıllıklandırılmış fark ve trend grafikleri, seçilen TOPLAM/MEDIAN değerleme yönteminden bağımsız olarak şirketlerin yıllıklandırılmış gelir tablosu kalemlerinin toplamından hazırlanır.",
+      "Eksik açıklamanın sahte düşüş yaratmaması için her kalemde referans döneme ulaşmış sabit ve karşılaştırılabilir şirket evreni kullanılır. Kapsama girmeyen şirketler dönem bilgisiyle ayrıca listelenir.",
+      "Sektör marjları basit şirket marjı ortalaması değildir; sektör brüt kârı, faaliyet kârı, FAVÖK'ü ve net kârı sektör satış toplamına bölünerek hesaplanır.",
+    ],
+    source: "Hesaplama yöntemi: sabit şirket evrenli yıllıklandırılmış sektör toplamı.",
   },
 };
 
@@ -248,35 +286,33 @@ function formatKpiRange(low, high) {
   return `${formatKpiNumber(low)} – ${formatKpiNumber(high)} TL`;
 }
 
+function neutralValuationPosition(status) {
+  const normalized = String(status || "").trim().toLocaleLowerCase("tr-TR");
+  if (["iskontolu", "az değerli"].includes(normalized)) {
+    return "Piyasa fiyatı model ortalamasının altında";
+  }
+  if (["pahalı", "biraz yüksek"].includes(normalized)) {
+    return "Piyasa fiyatı model ortalamasının üzerinde";
+  }
+  if (normalized === "adil") return "Piyasa fiyatı model ortalamasına yakın";
+  return "Model konumu hesaplanamadı";
+}
+
 function renderValuationKpis(container, summary) {
   if (!summary) return;
 
-  const potential = Number(summary.upside_pct);
-  const potentialIsFinite = Number.isFinite(potential);
-  const potentialLabel = !potentialIsFinite
-    ? "Hedef Potansiyeli"
-    : potential >= 0
-      ? "Yukarı Potansiyel"
-      : "Aşağı Yönlü Risk";
-  const potentialValue = potentialIsFinite
-    ? `${potential > 0 ? "+%" : potential < 0 ? "-%" : "%"}${formatKpiNumber(Math.abs(potential))}`
+  const targetPeriodReturn = Number(summary.target_period_return_pct);
+  const targetPeriodValue = Number.isFinite(targetPeriodReturn)
+    ? `${targetPeriodReturn > 0 ? "+%" : targetPeriodReturn < 0 ? "-%" : "%"}${formatKpiNumber(Math.abs(targetPeriodReturn))}`
     : "—";
-  const potentialTone = !potentialIsFinite
-    ? "is-neutral"
-    : potential >= 10
-      ? "is-positive"
-      : potential < 0
-        ? "is-negative"
-        : "is-neutral";
-
   const panel = document.createElement("section");
   panel.className = "valuation-kpi-panel";
-  panel.setAttribute("aria-label", "İleri değerleme özeti");
+  panel.setAttribute("aria-label", "Model bazlı değerleme özeti");
 
   const heading = document.createElement("div");
   heading.className = "valuation-kpi-heading";
   const title = document.createElement("h3");
-  title.textContent = "İleri Değerleme Özeti";
+  title.textContent = "Model Bazlı Değerleme Özeti";
   const period = document.createElement("span");
   period.textContent = summary.period ? `${summary.period} · ${summary.horizon || "İleri değerleme"}` : (summary.horizon || "İleri değerleme");
   heading.append(title, period);
@@ -286,11 +322,11 @@ function renderValuationKpis(container, summary) {
   grid.className = "valuation-kpi-grid";
   const cards = [
     { label: "Güncel Fiyat", value: formatKpiNumber(summary.current_price, "TL") },
-    { label: "Ortalama Hedef", value: formatKpiNumber(summary.average_target, "TL"), tone: "is-accent" },
-    { label: potentialLabel, value: potentialValue, tone: potentialTone },
-    { label: "Senaryo Aralığı", value: formatKpiRange(summary.scenario_low, summary.scenario_high) },
-    { label: "Veri Güveni", value: `${summary.confidence || "—"}${Number.isFinite(Number(summary.confidence_score)) ? ` · ${formatKpiNumber(summary.confidence_score)}/100` : ""}` },
-    { label: "Değerleme Görünümü", value: summary.status || "Belirsiz", tone: `is-status ${potentialTone}` },
+    { label: "Model Değerleme Ortalaması", value: formatKpiNumber(summary.average_target, "TL") },
+    { label: "Piyasa Fiyatına Göre Model Farkı", value: targetPeriodValue },
+    { label: "Model Değerleme Aralığı", value: formatKpiRange(summary.scenario_low, summary.scenario_high) },
+    { label: "Veri ve Model Yeterliliği", value: `${summary.confidence || "—"}${Number.isFinite(Number(summary.confidence_score)) ? ` · ${formatKpiNumber(summary.confidence_score)}/100` : ""}` },
+    { label: "Piyasa Fiyatının Model Aralığındaki Konumu", value: neutralValuationPosition(summary.status) },
   ];
 
   cards.forEach((item) => {
@@ -310,6 +346,106 @@ function renderValuationKpis(container, summary) {
   container.appendChild(panel);
 }
 
+function reportMetadataRows(report) {
+  if (!report) return [];
+  let generatedAt = report.generated_at || "—";
+  if (report.generated_at) {
+    const parsed = new Date(report.generated_at);
+    if (!Number.isNaN(parsed.getTime())) {
+      generatedAt = parsed.toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
+    }
+  }
+  const rows = [
+    ["Rapor Kimliği", report.report_id || "—"],
+    ["Oluşturulma Zamanı", generatedAt],
+    ["Finansal Veri Kaynağı", report.financial_source || "—"],
+    ["Fiyat Veri Kaynağı", report.price_source || "—"],
+    ["Metodoloji Sürümü", report.methodology_version || "—"],
+  ];
+  if (report.financial_period) rows.splice(2, 0, ["Son Finansal Dönem", report.financial_period]);
+  if (report.scope) rows.splice(2, 0, ["Analiz Kapsamı", report.scope]);
+  if (report.comparison_method) rows.splice(3, 0, ["Karşılaştırma Yöntemi", report.comparison_method]);
+  return rows;
+}
+
+function renderReportMetadata(container, report, { prepend = false } = {}) {
+  if (!report) return;
+  const details = document.createElement("details");
+  details.className = "report-metadata";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = "Rapor bilgileri ve veri kapsamı";
+  details.appendChild(summary);
+
+  const grid = document.createElement("dl");
+  grid.className = "report-metadata-grid";
+  reportMetadataRows(report).forEach(([labelText, valueText]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("dt");
+    const value = document.createElement("dd");
+    label.textContent = labelText;
+    value.textContent = valueText;
+    item.append(label, value);
+    grid.appendChild(item);
+  });
+  details.appendChild(grid);
+
+  [report.price_time_note, report.update_policy, report.correction_policy]
+    .filter(Boolean)
+    .forEach((copy) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = copy;
+      details.appendChild(paragraph);
+    });
+  if (prepend) container.insertBefore(details, container.firstChild);
+  else container.appendChild(details);
+}
+
+function valuationReportId() {
+  return state.company.data?.meta?.rapor_bilgisi?.report_id || "unknown-report";
+}
+
+function valuationDisclosureAccepted() {
+  return state.company.valuationAcceptedReports.has(valuationReportId());
+}
+
+function showValuationDisclosure() {
+  const dialog = document.getElementById("valuation-disclosure-dialog");
+  if (!dialog) return;
+  dialog.dataset.reportId = valuationReportId();
+  dialog.dataset.context = "company";
+  const reportLabel = dialog.querySelector("[data-disclosure-report-id]");
+  if (reportLabel) reportLabel.textContent = valuationReportId();
+  if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+}
+
+function showSectorDisclosure(onAccept) {
+  const dialog = document.getElementById("valuation-disclosure-dialog");
+  if (!dialog) return;
+  state.disclosure.pendingAction = onAccept;
+  dialog.dataset.context = "sector";
+  dialog.dataset.reportId = "Çalıştırılacak sektör analiz raporu";
+  const reportLabel = dialog.querySelector("[data-disclosure-report-id]");
+  if (reportLabel) reportLabel.textContent = "Analiz tamamlandığında oluşturulacaktır";
+  if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+}
+
+function renderValuationDisclosurePlaceholder(container) {
+  const notice = document.createElement("section");
+  notice.className = "valuation-disclosure-placeholder";
+  const title = document.createElement("h3");
+  title.textContent = "Değerleme raporu öncesi bilgilendirme";
+  const text = document.createElement("p");
+  text.textContent = "Bu rapor kişiselleştirilmemiş model çıktıları içerir. Sonuçları görüntülemeden önce kapsam ve risk bilgilendirmesini okuyun.";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary";
+  button.textContent = "Bilgilendirmeyi Görüntüle";
+  button.addEventListener("click", showValuationDisclosure);
+  notice.append(title, text, button);
+  container.appendChild(notice);
+}
+
 function renderValuationWarning(container, message) {
   if (!message) return;
   const warning = document.createElement("section");
@@ -317,11 +453,49 @@ function renderValuationWarning(container, message) {
   warning.setAttribute("role", "status");
 
   const title = document.createElement("strong");
-  title.textContent = "İleri değerleme gösterilemiyor";
+  title.textContent = "Model bazlı değerleme gösterilemiyor";
   const text = document.createElement("p");
   text.textContent = message;
   warning.append(title, text);
   container.appendChild(warning);
+}
+
+function renderSectorCoverageNotice(container, coverage) {
+  if (!coverage) return;
+  const notice = document.createElement("section");
+  notice.className = "sector-coverage-note";
+  notice.setAttribute("role", "status");
+
+  const title = document.createElement("strong");
+  title.textContent = "Sektör dönem kapsamı";
+  notice.appendChild(title);
+
+  const reference = document.createElement("p");
+  reference.textContent = `${coverage.reference_period || "—"} referans dönemli grafikler, ${coverage.reference_count || 0}/${coverage.successful_count || 0} karşılaştırılabilir şirketin sabit evreninden oluşturuldu.`;
+  notice.appendChild(reference);
+
+  if (coverage.observed_latest_period && coverage.observed_latest_period !== coverage.reference_period) {
+    const latest = document.createElement("p");
+    latest.textContent = `Sektörde gözlenen en güncel dönem ${coverage.observed_latest_period}; bu dönemi ${coverage.observed_latest_reporter_count || 0}/${coverage.successful_count || 0} şirket açıkladı. Kapsam yeterli olmadığı için toplam grafiklerinde ${coverage.reference_period} kullanıldı.`;
+    notice.appendChild(latest);
+  }
+
+  const missing = Object.entries(coverage.observed_latest_missing || {});
+  if (missing.length) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = `${coverage.observed_latest_period || "Son"} dönemi henüz bulunmayan ${missing.length} şirketi göster`;
+    const list = document.createElement("p");
+    list.textContent = missing.map(([symbol, period]) => `${symbol} (son: ${period})`).join(", ");
+    details.append(summary, list);
+    notice.appendChild(details);
+  } else {
+    const complete = document.createElement("p");
+    complete.textContent = "Başarıyla analiz edilen şirketlerin tamamında en güncel mali dönem bulunmaktadır.";
+    notice.appendChild(complete);
+  }
+
+  container.insertBefore(notice, container.firstChild);
 }
 
 function formatSummaryCompact(value) {
@@ -435,21 +609,21 @@ function renderSummaryPlot(mount, points, valueKey, titleText, type = "bar") {
         x, y,
         type: "scatter",
         mode: "lines+markers",
-        line: { color: "#6DB432", width: 2.5 },
-        marker: { color: "#88ca4f", size: 6 },
+        line: { color: "#0D6628", width: 2.5 },
+        marker: { color: "#6EAD50", size: 6 },
         fill: "tozeroy",
-        fillcolor: "rgba(109,180,50,.10)",
+        fillcolor: "rgba(110,173,80,.16)",
         text: y.map((value) => `${formatKpiNumber(value, "TL")}`),
         hovertemplate: "%{x}<br>%{text}<extra></extra>",
       }
     : {
         x, y,
         type: "bar",
-        marker: { color: y.map((value) => value >= 0 ? "#6DB432" : "#ff6b6b") },
+        marker: { color: y.map((value) => value >= 0 ? "#0D6628" : "#FF0000") },
         text: y.map(formatSummaryCompact),
         textangle: 0,
         textposition: "auto",
-        textfont: { size: 9, color: "#202022" },
+        textfont: { size: 9, color: "#17341F" },
         cliponaxis: false,
         hovertemplate: "%{x}<br>%{text}<extra></extra>",
       };
@@ -459,12 +633,12 @@ function renderSummaryPlot(mount, points, valueKey, titleText, type = "bar") {
     margin: { l: 54, r: 16, t: 8, b: 48 },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(0,0,0,0)",
-    font: { color: "#d7d7d8", size: 11 },
+    font: { color: "#17341F", size: 11 },
     showlegend: false,
     bargap: type === "bar" ? 0.22 : undefined,
     hovermode: "closest",
-    xaxis: { showgrid: false, automargin: true, tickfont: { color: "#f0f0f0", size: 11, family: "Arial" }, tickangle: 45 },
-    yaxis: { gridcolor: "rgba(255,255,255,.08)", zerolinecolor: "rgba(255,255,255,.16)", automargin: true },
+    xaxis: { showgrid: false, automargin: true, tickfont: { color: "#17341F", size: 11, family: "Arial" }, tickangle: 45 },
+    yaxis: { gridcolor: "rgba(13,102,40,.12)", zerolinecolor: "rgba(13,102,40,.22)", automargin: true },
   }, OVERVIEW_PLOT_CONFIG);
 }
 
@@ -902,7 +1076,7 @@ function extractClickedSubplot(figure, gd, clientX, clientY) {
   function cleanAxis(axisKey) {
     const src = srcLayout[axisKey] || {};
     const keep = {};
-    ["title", "tickangle", "type", "tickfont", "tickformat", "nticks",
+    ["title", "tickangle", "type", "tickfont", "tickformat", "tickmode", "tickvals", "ticktext", "nticks",
       "showgrid", "gridcolor", "zeroline", "zerolinecolor", "color",
       "linecolor", "automargin", "categoryorder", "categoryarray"].forEach((k) => {
       if (src[k] !== undefined) keep[k] = src[k];
@@ -950,8 +1124,8 @@ function withZoomNavigation(layout, data) {
     axis.rangeslider = Object.assign({}, axis.rangeslider || {}, {
       visible: true,
       thickness: 0.12,
-      bgcolor: "rgba(0,0,0,0.25)",
-      bordercolor: "rgba(255,255,255,0.12)",
+      bgcolor: "rgba(236,241,229,0.88)",
+      bordercolor: "rgba(13,102,40,0.24)",
       borderwidth: 1,
     });
     axis.automargin = true;
@@ -1056,10 +1230,12 @@ function renderSector() {
     renderCharts(content, filtered);
     const notes =
       imgFilter === "all"
-        ? [SECTOR_INFO_NOTES.bar, SECTOR_INFO_NOTES.heatmap]
+        ? [SECTOR_INFO_NOTES.bar, SECTOR_INFO_NOTES.heatmap, SECTOR_INFO_NOTES.sector_financials]
         : [SECTOR_INFO_NOTES[imgFilter]];
     prependInfoNotes(content, notes);
   }
+  renderReportMetadata(content, data.meta?.rapor_bilgisi, { prepend: true });
+  renderSectorCoverageNotice(content, data.meta?.sektor_donem_kapsami);
 }
 
 async function initSector() {
@@ -1111,6 +1287,10 @@ async function initSector() {
 
   // Analizi çalıştır
   runBtn.addEventListener("click", async () => {
+    if (!state.sector.disclosureAccepted) {
+      showSectorDisclosure(() => runBtn.click());
+      return;
+    }
     const sureMesaji = piotroskiEl.checked
       ? " Piotroski F-Skoru da hesaplandığı için işlem biraz daha uzun sürebilir."
       : " Bu işlem birkaç dakika sürebilir.";
@@ -1155,6 +1335,7 @@ async function initSector() {
       setStatus(status, e.message || String(e), "error");
     } finally {
       runBtn.disabled = false;
+      state.sector.disclosureAccepted = false;
     }
   });
 }
@@ -1173,17 +1354,31 @@ function renderCompany() {
   const filteredTables = data.tables.filter((t) => allowedNames.includes(t.name));
   const filteredCharts = data.charts.filter((chart) => chart.category === category);
   const isSummary = category === "özet";
-  document.querySelector(".company-sidebar .sidebar-toggle")?.classList.toggle("hidden", isSummary);
+  const isTableOnly = category === "dikey";
+  const report = data.meta?.rapor_bilgisi;
+  const valuationRequiresDisclosure = (
+    category === "değerleme"
+    && Boolean(report?.valuation_created)
+    && !valuationDisclosureAccepted()
+  );
+  document.querySelector(".company-sidebar .sidebar-toggle")?.classList.toggle("hidden", isSummary || isTableOnly);
+
+  if (valuationRequiresDisclosure) {
+    renderValuationDisclosurePlaceholder(content);
+    requestAnimationFrame(showValuationDisclosure);
+    return;
+  }
 
   // Skor: grafik modunda da tablolar + bilgi notu görünsün (bu kategoride grafik yok).
-  const showTables = !isSummary && (mode === "table" || category === "skor");
-  const showCharts = !isSummary && mode === "image";
+  const showTables = !isSummary && (mode === "table" || category === "skor" || isTableOnly);
+  const showCharts = !isSummary && !isTableOnly && mode === "image";
 
   if (isSummary) {
     renderCompanySummary(content, data.meta?.sirket_ozeti);
   }
 
   if (category === "değerleme") {
+    renderReportMetadata(content, report);
     renderValuationWarning(content, data.meta?.degerleme_uyarisi);
   }
 
@@ -1201,6 +1396,57 @@ function renderCompany() {
   }
 
   prependInfoNotes(content, companyInfoNotesFor(category), { prepend: !isSummary });
+}
+
+function initValuationDisclosure() {
+  const dialog = document.getElementById("valuation-disclosure-dialog");
+  const acceptButton = document.getElementById("valuation-disclosure-accept");
+  const backButton = document.getElementById("valuation-disclosure-back");
+  if (!dialog || !acceptButton || !backButton) return;
+
+  acceptButton.addEventListener("click", () => {
+    if (dialog.dataset.context === "sector") {
+      state.sector.disclosureAccepted = true;
+      const pendingAction = state.disclosure.pendingAction;
+      state.disclosure.pendingAction = null;
+      dialog.close();
+      if (typeof pendingAction === "function") pendingAction();
+      return;
+    }
+    const reportId = dialog.dataset.reportId || valuationReportId();
+    state.company.valuationAcceptedReports.add(reportId);
+    try {
+      localStorage.setItem(
+        `fm-valuation-disclosure:${reportId}`,
+        JSON.stringify({
+          accepted_at: new Date().toISOString(),
+          disclosure_version: VALUATION_DISCLOSURE_VERSION,
+        })
+      );
+    } catch (error) {
+      // Tarayıcı depolaması kapalı olsa da mevcut oturumda kabul kaydı korunur.
+    }
+    dialog.close();
+    renderCompany();
+  });
+
+  const returnToSummary = () => {
+    if (dialog.dataset.context === "sector") {
+      state.disclosure.pendingAction = null;
+      if (dialog.open) dialog.close();
+      return;
+    }
+    if (dialog.open) dialog.close();
+    state.company.category = "özet";
+    document.querySelectorAll(".cat-btn").forEach((button) => button.classList.remove("active"));
+    document.querySelector(".cat-btn[data-cat='özet']")?.classList.add("active");
+    renderCompany();
+  };
+  backButton.addEventListener("click", returnToSummary);
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    returnToSummary();
+  });
 }
 
 async function initCompany() {
@@ -1245,7 +1491,6 @@ async function initCompany() {
       hisseEl.focus();
       return;
     }
-
     setStatus(status, "Finansal veriler hazırlanıyor… Seçimlerinize göre bu işlem birkaç dakika sürebilir.", null);
     runBtn.disabled = true;
     resultsArea.classList.add("hidden");
@@ -1319,6 +1564,7 @@ function initMainTabs() {
 window.addEventListener("load", async () => {
   initMainTabs();
   initChartZoom();
+  initValuationDisclosure();
   try {
     await initSector();
     await initCompany();

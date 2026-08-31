@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -14,8 +16,11 @@ from .notebook_runtime import NotebookRuntime, RenderedOutput
 from .plotly_theme import (
     COLORSCALE_HIGH_GOOD,
     COLORSCALE_LOW_GOOD,
+    DOWN_COLOR,
+    TREND_COLORWAY,
     UP_COLOR,
     apply_theme,
+    format_tr_number,
     format_period_labels,
     heatmap_vertical_spacing,
     style_heatmap_xaxes,
@@ -67,7 +72,225 @@ _HIGH_IS_GOOD = {
 _DISPLAY_LABELS = {
     "faiz_karsilama": "Faiz Karşılama Oranı",
     "ihracat_oranı_%": "İhracat Oranı (%)",
+    "Ortalama Tahmin PD": "Sektör Referanslı Model Piyasa Değeri",
+    "Ortalama Tahmin Fiyat": "Sektör Referanslı Model Değeri",
+    "iskonto_%": "Piyasa Fiyatına Göre Model Farkı (%)",
 }
+
+
+def _sector_report_metadata(sektor: str, analiz_turu: str) -> dict[str, Any]:
+    created_at = datetime.now(ZoneInfo("Europe/Istanbul"))
+    return {
+        "report_id": f"FM-SEKTOR-{created_at:%Y%m%d-%H%M%S}",
+        "generated_at": created_at.isoformat(timespec="seconds"),
+        "scope": sektor,
+        "comparison_method": analiz_turu,
+        "financial_source": "İş Yatırım",
+        "price_source": "Yahoo Finance",
+        "methodology_version": "FM-Sektör v2.0",
+        "valuation_created": True,
+        "price_time_note": (
+            "Fiyatlar veri kaynağındaki son erişilebilir gözlemlerdir; gerçek zamanlı "
+            "fiyat garantisi verilmez."
+        ),
+        "update_policy": (
+            "Rapor, analiz yeniden çalıştırıldığında erişilebilen finansal tablolar ve "
+            "fiyat verileriyle yeniden oluşturulur."
+        ),
+        "correction_policy": (
+            "Veri veya hesaplama hatası tespit edilirse yeni rapor kimliğiyle düzeltilmiş "
+            "bir sonuç yayımlanır."
+        ),
+    }
+
+_SECTOR_FLOW_COLS = [
+    "Satış Gelirleri",
+    "BRÜT KAR (ZARAR)",
+    "Net Faaliyet Kar/Zararı",
+    "FAVÖK",
+    "Ana Ortaklık Payları",
+]
+
+_SECTOR_FLOW_LABELS = {
+    "Satış Gelirleri": "Satış Gelirleri",
+    "BRÜT KAR (ZARAR)": "Brüt Kâr (Zarar)",
+    "Net Faaliyet Kar/Zararı": "Net Faaliyet Kârı/Zararı",
+    "FAVÖK": "FAVÖK",
+    "Ana Ortaklık Payları": "Net Dönem Kârı/Zararı",
+}
+
+_SECTOR_MARGIN_SPECS = {
+    "Brüt Kâr Marjı %": "BRÜT KAR (ZARAR)",
+    "Faaliyet Kâr Marjı %": "Net Faaliyet Kar/Zararı",
+    "FAVÖK Marjı %": "FAVÖK",
+    "Net Kâr Marjı %": "Ana Ortaklık Payları",
+}
+
+
+def _period_label(value: Any) -> str:
+    timestamp = pd.to_datetime(value, errors="coerce")
+    return "—" if pd.isna(timestamp) else f"{timestamp.year}/{timestamp.month}"
+
+
+def _build_sector_financial_history(
+    company_histories: dict[str, pd.DataFrame],
+    latest_financial_periods: dict[str, Any],
+    *,
+    requested_symbols: list[str] | None = None,
+    reference_coverage: float = 0.70,
+) -> dict[str, Any] | None:
+    """Create comparable sector totals without mixing stale reporting periods.
+
+    The reference quarter is the newest quarter reached by at least 70% of the
+    successfully analysed companies.  Every plotted metric then uses a fixed
+    cohort that has reported that reference quarter.  A period is plotted only
+    when the complete metric cohort has data, so a missing company cannot look
+    like a fall in sector revenue/profit.
+    """
+    normalized_histories: dict[str, pd.DataFrame] = {}
+    normalized_latest: dict[str, pd.Timestamp] = {}
+    for symbol, history in (company_histories or {}).items():
+        if not isinstance(history, pd.DataFrame) or history.empty:
+            continue
+        frame = history.copy()
+        frame.index = pd.DatetimeIndex(pd.to_datetime(frame.index)).tz_localize(None)
+        frame = frame.sort_index()
+        available = [column for column in _SECTOR_FLOW_COLS if column in frame.columns]
+        if not available:
+            continue
+        frame = frame.loc[:, available].apply(pd.to_numeric, errors="coerce")
+        normalized_histories[str(symbol)] = frame
+        latest = pd.to_datetime((latest_financial_periods or {}).get(symbol), errors="coerce")
+        if pd.isna(latest):
+            latest = frame.index.max()
+        normalized_latest[str(symbol)] = pd.Timestamp(latest).tz_localize(None)
+
+    if not normalized_histories or not normalized_latest:
+        return None
+
+    successful_symbols = sorted(normalized_histories)
+    successful_count = len(successful_symbols)
+    minimum_coverage = max(1, int(np.ceil(successful_count * reference_coverage)))
+    latest_values = pd.Series(normalized_latest).sort_values()
+    observed_latest = pd.Timestamp(latest_values.max())
+    reference_period = observed_latest
+    for candidate in sorted(latest_values.unique(), reverse=True):
+        candidate_ts = pd.Timestamp(candidate)
+        if int((latest_values >= candidate_ts).sum()) >= minimum_coverage:
+            reference_period = candidate_ts
+            break
+
+    reference_symbols = sorted(
+        symbol
+        for symbol in successful_symbols
+        if normalized_latest[symbol] >= reference_period
+        and reference_period in normalized_histories[symbol].index
+    )
+    if not reference_symbols:
+        return None
+
+    totals = pd.DataFrame(dtype=float)
+    metric_coverage: dict[str, int] = {}
+    for column in _SECTOR_FLOW_COLS:
+        eligible = [
+            symbol
+            for symbol in reference_symbols
+            if column in normalized_histories[symbol].columns
+            and pd.notna(normalized_histories[symbol].at[reference_period, column])
+        ]
+        if not eligible:
+            continue
+        matrix = pd.concat(
+            {
+                symbol: normalized_histories[symbol][column]
+                for symbol in eligible
+            },
+            axis=1,
+        ).sort_index()
+        # Fixed company universe per metric: incomplete periods are not summed.
+        complete = matrix.notna().all(axis=1)
+        total = matrix.loc[complete].sum(axis=1, min_count=len(eligible))
+        totals[column] = total
+        metric_coverage[column] = len(eligible)
+
+    totals = totals.sort_index().dropna(how="all")
+    if totals.empty:
+        return None
+
+    differences = totals.diff().dropna(how="all")
+    trend = pd.DataFrame(index=totals.index, dtype=float)
+    for column in totals.columns:
+        series = totals[column].dropna()
+        base_value = next((float(value) for value in series if value != 0), np.nan)
+        if np.isfinite(base_value):
+            trend[column] = totals[column] / base_value * 100.0
+
+    margins = pd.DataFrame(dtype=float)
+    margin_coverage: dict[str, int] = {}
+    for label, numerator in _SECTOR_MARGIN_SPECS.items():
+        eligible = [
+            symbol
+            for symbol in reference_symbols
+            if numerator in normalized_histories[symbol].columns
+            and "Satış Gelirleri" in normalized_histories[symbol].columns
+            and pd.notna(normalized_histories[symbol].at[reference_period, numerator])
+            and pd.notna(normalized_histories[symbol].at[reference_period, "Satış Gelirleri"])
+        ]
+        if not eligible:
+            continue
+        numerator_matrix = pd.concat(
+            {symbol: normalized_histories[symbol][numerator] for symbol in eligible}, axis=1
+        ).sort_index()
+        sales_matrix = pd.concat(
+            {symbol: normalized_histories[symbol]["Satış Gelirleri"] for symbol in eligible}, axis=1
+        ).sort_index()
+        shared_index = numerator_matrix.index.union(sales_matrix.index).sort_values()
+        numerator_matrix = numerator_matrix.reindex(shared_index)
+        sales_matrix = sales_matrix.reindex(shared_index)
+        complete = numerator_matrix.notna().all(axis=1) & sales_matrix.notna().all(axis=1)
+        numerator_total = numerator_matrix.loc[complete].sum(axis=1, min_count=len(eligible))
+        sales_total = sales_matrix.loc[complete].sum(axis=1, min_count=len(eligible))
+        margins[label] = numerator_total / sales_total.replace(0, np.nan) * 100.0
+        margin_coverage[label] = len(eligible)
+    margins = margins.replace([np.inf, -np.inf], np.nan).dropna(how="all")
+
+    observed_missing = {
+        symbol: _period_label(normalized_latest[symbol])
+        for symbol in successful_symbols
+        if normalized_latest[symbol] < observed_latest
+    }
+    reference_missing = {
+        symbol: _period_label(normalized_latest[symbol])
+        for symbol in successful_symbols
+        if normalized_latest[symbol] < reference_period
+    }
+    requested = [str(symbol) for symbol in (requested_symbols or successful_symbols)]
+    no_history = sorted(set(requested).difference(normalized_histories))
+
+    return {
+        "totals": totals,
+        "differences": differences,
+        "trend": trend,
+        "margins": margins,
+        "coverage": {
+            "observed_latest_period": _period_label(observed_latest),
+            "reference_period": _period_label(reference_period),
+            "successful_count": successful_count,
+            "reference_count": len(reference_symbols),
+            "requested_count": len(requested),
+            "reference_ratio_pct": round(len(reference_symbols) / successful_count * 100.0, 1),
+            "observed_latest_reporter_count": int((latest_values >= observed_latest).sum()),
+            "observed_latest_missing": observed_missing,
+            "reference_missing": reference_missing,
+            "no_history": no_history,
+            "metric_coverage": {
+                _SECTOR_FLOW_LABELS.get(column, column): count
+                for column, count in metric_coverage.items()
+            },
+            "margin_coverage": margin_coverage,
+            "method": "Sabit şirket evrenli yıllıklandırılmış sektör toplamı",
+        },
+    }
 
 
 def _prepare_plot_df(sektor_df: pd.DataFrame) -> pd.DataFrame:
@@ -115,7 +338,7 @@ def _plot_sector_bars(sirket_df: pd.DataFrame) -> go.Figure | None:
             go.Bar(
                 x=data.index.tolist(),
                 y=data.values.tolist(),
-                marker=dict(color=UP_COLOR, line=dict(color="#8BC064", width=0.5)),
+                marker=dict(color=UP_COLOR, line=dict(color="#6EAD50", width=0.5)),
                 text=[f"{v:,.0f}" for v in data.values],
                 textposition="outside",
                 showlegend=False,
@@ -192,6 +415,153 @@ def _plot_sector_heatmaps(sirket_df: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
+def _plot_sector_annualized_changes(
+    differences: pd.DataFrame,
+    coverage: dict[str, Any],
+) -> go.Figure | None:
+    columns = [column for column in _SECTOR_FLOW_COLS if column in differences.columns]
+    if not columns or differences.empty:
+        return None
+    ncols = 2
+    nrows = int(np.ceil(len(columns) / ncols))
+    fig = make_subplots(
+        rows=nrows,
+        cols=ncols,
+        subplot_titles=[_SECTOR_FLOW_LABELS[column].upper() for column in columns],
+    )
+    metric_coverage = coverage.get("metric_coverage", {})
+    for index, column in enumerate(columns):
+        row, col = divmod(index, ncols)
+        series = pd.to_numeric(differences[column], errors="coerce").dropna()
+        if series.empty:
+            continue
+        label = _SECTOR_FLOW_LABELS[column]
+        company_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        hover = [
+            f"Değişim: {format_tr_number(value)}<br>Karşılaştırılabilir şirket: {company_count}"
+            for value in series
+        ]
+        fig.add_trace(
+            go.Waterfall(
+                x=format_period_labels(series.index),
+                y=series.values.tolist(),
+                measure=["relative"] * len(series),
+                increasing={"marker": {"color": UP_COLOR}},
+                decreasing={"marker": {"color": DOWN_COLOR}},
+                connector={"visible": False},
+                text=[format_tr_number(value) for value in series],
+                textposition="outside",
+                textfont={"size": 10},
+                customdata=hover,
+                hovertemplate="%{x}<br>%{customdata}<extra>" + label + "</extra>",
+                showlegend=False,
+            ),
+            row=row + 1,
+            col=col + 1,
+        )
+        fig.update_xaxes(tickangle=45, automargin=True, row=row + 1, col=col + 1)
+    title = (
+        "Sektör Gelir Tablosu Değişim Analizi — Yıllıklandırılmış"
+        f" | Kapsam: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
+    )
+    apply_theme(fig, height=340 * nrows, title=title)
+    style_subplot_titles(fig)
+    return fig
+
+
+def _plot_sector_trend_index(
+    trend: pd.DataFrame,
+    coverage: dict[str, Any],
+) -> go.Figure | None:
+    columns = [column for column in _SECTOR_FLOW_COLS if column in trend.columns]
+    if not columns or trend.empty:
+        return None
+    ncols = 3
+    nrows = int(np.ceil(len(columns) / ncols))
+    fig = make_subplots(
+        rows=nrows,
+        cols=ncols,
+        subplot_titles=[_SECTOR_FLOW_LABELS[column].upper() for column in columns],
+    )
+    metric_coverage = coverage.get("metric_coverage", {})
+    for index, column in enumerate(columns):
+        row, col = divmod(index, ncols)
+        series = pd.to_numeric(trend[column], errors="coerce").dropna()
+        if series.empty:
+            continue
+        label = _SECTOR_FLOW_LABELS[column]
+        company_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        fig.add_trace(
+            go.Scatter(
+                x=format_period_labels(series.index),
+                y=series.values.tolist(),
+                mode="lines+markers",
+                line={"color": TREND_COLORWAY[index % len(TREND_COLORWAY)]},
+                customdata=[company_count] * len(series),
+                hovertemplate=(
+                    "%{x}<br>Endeks: %{y:.1f}<br>Karşılaştırılabilir şirket: %{customdata}"
+                    "<extra>" + label + "</extra>"
+                ),
+                showlegend=False,
+            ),
+            row=row + 1,
+            col=col + 1,
+        )
+        fig.add_hline(y=100, line_dash="dash", line_width=1, row=row + 1, col=col + 1)
+        fig.update_xaxes(tickangle=45, automargin=True, row=row + 1, col=col + 1)
+    title = (
+        "Sektör Gelir Tablosu Trend Endeksi — Baz = 100"
+        f" | Referans dönem: {coverage.get('reference_period', '—')}"
+    )
+    apply_theme(fig, height=300 * nrows, title=title)
+    style_subplot_titles(fig)
+    return fig
+
+
+def _plot_sector_margins(
+    margins: pd.DataFrame,
+    coverage: dict[str, Any],
+) -> go.Figure | None:
+    columns = [column for column in _SECTOR_MARGIN_SPECS if column in margins.columns]
+    if not columns or margins.empty:
+        return None
+    ncols = 2
+    nrows = int(np.ceil(len(columns) / ncols))
+    fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[c.upper() for c in columns])
+    margin_coverage = coverage.get("margin_coverage", {})
+    for index, column in enumerate(columns):
+        row, col = divmod(index, ncols)
+        series = pd.to_numeric(margins[column], errors="coerce").dropna()
+        if series.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=format_period_labels(series.index),
+                y=series.values.tolist(),
+                mode="lines+markers",
+                line={"color": TREND_COLORWAY[index % len(TREND_COLORWAY)]},
+                customdata=[margin_coverage.get(column, coverage.get("reference_count", 0))] * len(series),
+                hovertemplate=(
+                    "%{x}<br>Marj: %{y:.2f}%<br>Karşılaştırılabilir şirket: %{customdata}"
+                    "<extra>" + column + "</extra>"
+                ),
+                showlegend=False,
+            ),
+            row=row + 1,
+            col=col + 1,
+        )
+        fig.add_hline(y=0, line_dash="dash", line_width=1, row=row + 1, col=col + 1)
+        fig.update_xaxes(tickangle=45, automargin=True, row=row + 1, col=col + 1)
+        fig.update_yaxes(ticksuffix="%", row=row + 1, col=col + 1)
+    title = (
+        "Sektör Kârlılık Marjları — Yıllıklandırılmış Toplamlar"
+        f" | Kapsam: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
+    )
+    apply_theme(fig, height=310 * nrows, title=title)
+    style_subplot_titles(fig)
+    return fig
+
+
 def sector_options(project_root: Path) -> dict[str, Any]:
     temel_ozet_path = project_root / "temel_ozet.xlsx"
     temel_ozet = pd.read_excel(temel_ozet_path)
@@ -248,6 +618,13 @@ def run_sector_analysis(
         detail = "; ".join(f"{code}: {message}" for code, message in failed_symbols.items())
         raise RuntimeError(f"Sektörde hiçbir hisse analiz edilemedi. {detail}".strip())
 
+    sector_financials = _build_sector_financial_history(
+        dict(sektor_df.attrs.get("company_histories", {})),
+        dict(sektor_df.attrs.get("latest_financial_periods", {})),
+        requested_symbols=hisseler,
+    )
+    sector_coverage = sector_financials["coverage"] if sector_financials else None
+
     output_started = time.perf_counter()
     display_sector_df = sektor_df.rename(columns=_DISPLAY_LABELS)
     tables: list[dict[str, str]] = [
@@ -286,6 +663,28 @@ def run_sector_analysis(
                 "figure": to_json_safe(heatmap_fig),
             }
         )
+    if sector_financials is not None:
+        sector_figures = (
+            _plot_sector_annualized_changes(
+                sector_financials["differences"], sector_financials["coverage"]
+            ),
+            _plot_sector_trend_index(
+                sector_financials["trend"], sector_financials["coverage"]
+            ),
+            _plot_sector_margins(
+                sector_financials["margins"], sector_financials["coverage"]
+            ),
+        )
+        for figure in sector_figures:
+            if figure is None:
+                continue
+            charts.append(
+                {
+                    "name": f"sektor_finansal_{uuid.uuid4().hex[:10]}",
+                    "category": "sector_financials",
+                    "figure": to_json_safe(figure),
+                }
+            )
 
     output_seconds = time.perf_counter() - output_started
     total_seconds = time.perf_counter() - total_started
@@ -299,6 +698,8 @@ def run_sector_analysis(
             "istenen_hisse_sayisi": len(hisseler),
             "basarili_hisse_sayisi": successful_count,
             "basarisiz_hisseler": failed_symbols,
+            "sektor_donem_kapsami": sector_coverage,
+            "rapor_bilgisi": _sector_report_metadata(sektor, analiz_turu),
             "piotroski_hesapla": piotroski_hesapla,
             "sureler_saniye": {
                 "toplam": round(total_seconds, 2),

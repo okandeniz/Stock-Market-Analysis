@@ -1,4 +1,4 @@
-"""Shared Plotly theming helpers so charts match the web app's dark UI.
+"""Shared Plotly theming helpers so charts match the web app's light UI.
 
 Used both by app/analysis_sector.py (plain Python) and by the plot functions
 that live inside the notebooks (imported as `app.plotly_theme`, since the
@@ -11,29 +11,29 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-CARD_BG = "#353537"
-GRID_COLOR = "rgba(255,255,255,0.09)"
-TEXT_COLOR = "#f0f0f0"
-MUTED_COLOR = "#B0B0B2"
-ACCENT = "#6DB432"
-ACCENT_H = "#8BC064"
-UP_COLOR = "#6DB432"
-DOWN_COLOR = "#ff6b6b"
+CARD_BG = "#FFFFFF"
+GRID_COLOR = "rgba(13,102,40,0.13)"
+TEXT_COLOR = "#17341F"
+MUTED_COLOR = "#56685B"
+ACCENT = "#0D6628"
+ACCENT_H = "#6EAD50"
+UP_COLOR = "#0D6628"
+DOWN_COLOR = "#FF0000"
 
 # Diverging colorscale used for ratio/multiple heatmaps ("düşük iyi").
-COLORSCALE_LOW_GOOD = "RdYlGn_r"
+COLORSCALE_LOW_GOOD = [[0.0, "#0D6628"], [0.5, "#ECF1E5"], [1.0, "#FF0000"]]
 # Same scale, reversed, for metrics where a higher value is better.
-COLORSCALE_HIGH_GOOD = "RdYlGn"
+COLORSCALE_HIGH_GOOD = [[0.0, "#FF0000"], [0.5, "#ECF1E5"], [1.0, "#0D6628"]]
 
 X_TICK_FONT = {"color": TEXT_COLOR, "size": 11, "family": "Arial"}
 Y_TICK_FONT = {"color": MUTED_COLOR, "size": 10}
 
 # Çok sayıda seriyi tek grafikte (örn. trend endeksi) ayırt edilebilir şekilde
-# göstermek için koyu temayla uyumlu, birbirinden belirgin renk paleti.
+# göstermek için ana paletin tonlarından oluşan ayırt edilebilir renk dizisi.
 TREND_COLORWAY = [
-    "#6DB432", "#ff6b6b", "#4aa3ff", "#f0c040", "#B18CFF",
-    "#ff8c42", "#40E0D0", "#FF69B4", "#FFD700", "#00CED1",
-    "#FF4500", "#ADFF2F", "#1E90FF", "#DA70D6", "#C0C0C0",
+    "#0D6628", "#6EAD50", "#FF0000", "#2F7D45", "#8FC275",
+    "#174E29", "#9FBE8F", "#B00000", "#4A8F5D", "#C8DDBE",
+    "#5E765F", "#D84A4A", "#245C35", "#82A772", "#7A1A1A",
 ]
 
 
@@ -61,7 +61,7 @@ def heatmap_vertical_spacing(n_rows: int) -> float:
 
 
 def style_heatmap_xaxes(fig: Any) -> None:
-    """Angled white period labels with automargin so titles stay clear."""
+    """Angled period labels with automargin so titles stay clear."""
     fig.update_xaxes(
         tickangle=45,
         tickfont=X_TICK_FONT,
@@ -71,7 +71,7 @@ def style_heatmap_xaxes(fig: Any) -> None:
 
 
 def apply_theme(fig: Any, *, height: int | None = None, title: str | None = None) -> None:
-    """Apply the app's dark theme to a Plotly figure, in place."""
+    """Apply the app's light theme to a Plotly figure, in place."""
     layout_kwargs: dict[str, Any] = {
         "paper_bgcolor": CARD_BG,
         "plot_bgcolor": CARD_BG,

@@ -44,6 +44,8 @@ _INTEGER_EXACT_NAMES = {
     "cv ufku",
     "toplam aday",
     "başarılı aday",
+    "sektör örnek sayısı",
+    "backtest örnek sayısı",
 }
 
 
@@ -122,9 +124,9 @@ def write_formatted_excel(df: pd.DataFrame, path: Path, *, index: bool = True) -
         worksheet.freeze_panes = "B2" if index else "A2"
         worksheet.auto_filter.ref = worksheet.dimensions
 
-        header_fill = PatternFill("solid", fgColor="353537")
+        header_fill = PatternFill("solid", fgColor="0D6628")
         for cell in worksheet[1]:
-            cell.font = Font(bold=True, color="F0F0F0")
+            cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = header_fill
 
         column_offset = 2 if index else 1

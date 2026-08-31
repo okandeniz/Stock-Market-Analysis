@@ -104,6 +104,93 @@ def _robust_multiple(series: pd.Series) -> dict[str, float]:
     }
 
 
+def _calculate_methods(
+    projection: pd.DataFrame,
+    ratios: pd.DataFrame,
+    *,
+    shares: float,
+    horizon_type: str,
+) -> pd.DataFrame:
+    recent = ratios.tail(12)
+    multiple_specs = {
+        "F/K": ("F/K", 0.30),
+        "PD/DD": ("PD/DD", 0.15),
+        "FD/FAVÖK": ("FD/FAVÖK", 0.35),
+        "FD/NS": ("FD/NS", 0.20),
+    }
+    multiples = {
+        method: _robust_multiple(
+            recent[column] if column in recent.columns else pd.Series(dtype=float)
+        )
+        for method, (column, _) in multiple_specs.items()
+    }
+
+    method_rows: list[dict[str, Any]] = []
+    raw_weights: dict[str, float] = {}
+    for method, (_, importance) in multiple_specs.items():
+        multiple = multiples[method]
+        base = projection.loc["Baz"]
+        low = projection.loc["Temkinli"]
+        high = projection.loc["İyimser"]
+        valid = np.isfinite(multiple["base"]) and multiple["count"] >= 4
+        if method == "F/K":
+            valid = valid and float(base["Net Kâr"]) > 0
+            target = float(base["Net Kâr"] / shares * multiple["base"]) if valid else np.nan
+            target_low = float(low["Net Kâr"] / shares * multiple["low"]) if valid else np.nan
+            target_high = float(high["Net Kâr"] / shares * multiple["high"]) if valid else np.nan
+        elif method == "PD/DD":
+            valid = valid and float(base["Özkaynak"]) > 0
+            target = float(base["Özkaynak"] / shares * multiple["base"]) if valid else np.nan
+            target_low = float(low["Özkaynak"] / shares * multiple["low"]) if valid else np.nan
+            target_high = float(high["Özkaynak"] / shares * multiple["high"]) if valid else np.nan
+            if horizon_type == "12 aylık ileri değerleme":
+                importance *= 0.75
+        elif method == "FD/FAVÖK":
+            valid = valid and float(base["FAVÖK"]) > 0
+            target = float((base["FAVÖK"] * multiple["base"] - base["Net Borç"]) / shares) if valid else np.nan
+            target_low = float((low["FAVÖK"] * multiple["low"] - low["Net Borç"]) / shares) if valid else np.nan
+            target_high = float((high["FAVÖK"] * multiple["high"] - high["Net Borç"]) / shares) if valid else np.nan
+        else:
+            # Satışlar tüm sermaye sağlayıcılarına ait bir faaliyet kalemidir;
+            # bu nedenle FD/NS ile firma değeri bulunup net borç düşülür.
+            valid = valid and float(base["Satış Gelirleri"]) > 0
+            target = float((base["Satış Gelirleri"] * multiple["base"] - base["Net Borç"]) / shares) if valid else np.nan
+            target_low = float((low["Satış Gelirleri"] * multiple["low"] - low["Net Borç"]) / shares) if valid else np.nan
+            target_high = float((high["Satış Gelirleri"] * multiple["high"] - high["Net Borç"]) / shares) if valid else np.nan
+
+        if valid and (not np.isfinite(target) or target <= 0):
+            valid = False
+            target = target_low = target_high = np.nan
+        elif valid:
+            target_low = max(0.0, float(target_low))
+            target_high = max(float(target), float(target_high))
+
+        raw_weight = float(importance * multiple["stability"]) if valid else 0.0
+        raw_weights[method] = raw_weight
+        method_rows.append(
+            {
+                "Yöntem": method,
+                "Baz Çarpan": multiple["base"],
+                "Çarpan Alt": multiple["low"],
+                "Çarpan Üst": multiple["high"],
+                "Örnek Sayısı": int(multiple["count"]),
+                "Baz Hedef": target,
+                "Temkinli Hedef": min(target_low, target) if valid else np.nan,
+                "İyimser Hedef": max(target_high, target) if valid else np.nan,
+                "Ham Güven Ağırlığı": raw_weight,
+            }
+        )
+
+    weight_total = sum(raw_weights.values())
+    if weight_total <= 0:
+        raise InsufficientValuationDataError(
+            "En az dört gözleme sahip geçerli bir değerleme çarpanı bulunamadı."
+        )
+    methods = pd.DataFrame(method_rows).set_index("Yöntem")
+    methods["Güven Ağırlığı %"] = [raw_weights[name] / weight_total * 100 for name in methods.index]
+    return methods.drop(columns=["Ham Güven Ağırlığı"])
+
+
 def _retention_ratio(
     ratios: pd.DataFrame,
     annual_flows: pd.DataFrame,
@@ -309,9 +396,75 @@ def _scenario_projection(
     return metadata, pd.DataFrame(projection_rows).set_index("Senaryo"), assumptions
 
 
+def _historical_validation(
+    quarterly: pd.DataFrame,
+    ratios: pd.DataFrame,
+    *,
+    max_windows: int = 3,
+) -> dict[str, float]:
+    """Backtest year-end targets using only information available at each cutoff."""
+    errors: list[float] = []
+    year_end_dates = pd.DatetimeIndex(ratios.index)
+    year_end_dates = year_end_dates[year_end_dates.month == 12]
+    for cutoff in sorted(year_end_dates, reverse=True):
+        target_year = int(cutoff.year) + 1
+        actual_rows = ratios.loc[
+            (pd.DatetimeIndex(ratios.index).year == target_year)
+            & (pd.DatetimeIndex(ratios.index).month == 12)
+        ]
+        if actual_rows.empty:
+            continue
+        actual_price = float(
+            pd.to_numeric(
+                actual_rows.iloc[-1].get(
+                    "duzeltilmis_fiyat", actual_rows.iloc[-1].get("fiyat")
+                ),
+                errors="coerce",
+            )
+        )
+        if not np.isfinite(actual_price) or actual_price <= 0:
+            continue
+        cutoff_ratios = ratios.loc[ratios.index <= cutoff]
+        cutoff_quarterly = quarterly.loc[quarterly.index <= cutoff]
+        if cutoff_ratios.empty or cutoff_quarterly.empty:
+            continue
+        shares = float(pd.to_numeric(cutoff_ratios.iloc[-1].get(SHARE_COLUMN), errors="coerce"))
+        if not np.isfinite(shares) or shares <= 0:
+            continue
+        try:
+            metadata, projection, _ = _scenario_projection(cutoff_quarterly, cutoff_ratios)
+            methods = _calculate_methods(
+                projection,
+                cutoff_ratios,
+                shares=shares,
+                horizon_type=str(metadata["horizon_type"]),
+            )
+        except InsufficientValuationDataError:
+            continue
+        weights = methods["Güven Ağırlığı %"] / 100.0
+        predicted = float((methods["Baz Hedef"] * weights).sum())
+        if np.isfinite(predicted) and predicted > 0:
+            errors.append(abs(predicted - actual_price) / actual_price)
+        if len(errors) >= max_windows:
+            break
+
+    if not errors:
+        return {"count": 0.0, "median_ape": np.nan, "score": 0.0}
+    median_ape = float(np.median(errors))
+    sample_factor = min(1.0, len(errors) / float(max_windows))
+    accuracy = 1.0 / (1.0 + median_ape)
+    return {
+        "count": float(len(errors)),
+        "median_ape": median_ape,
+        "score": float(accuracy * (0.50 + 0.50 * sample_factor)),
+    }
+
+
 def build_rule_based_valuation(
     statements: pd.DataFrame,
     ratios: pd.DataFrame,
+    *,
+    valuation_date: pd.Timestamp | None = None,
 ) -> ValuationResult:
     if not isinstance(statements, pd.DataFrame) or statements.empty:
         raise InsufficientValuationDataError("Finansal tablo geçmişi bulunamadı.")
@@ -333,78 +486,13 @@ def build_rule_based_valuation(
         )
     if not np.isfinite(current_price) or current_price <= 0:
         raise InsufficientValuationDataError("Güncel hisse fiyatı bulunamadı.")
-
     metadata, projection, assumptions = _scenario_projection(quarterly, ratios)
-    recent = ratios.tail(12)
-    multiple_specs = {
-        "F/K": ("F/K", 0.30),
-        "PD/DD": ("PD/DD", 0.15),
-        "FD/FAVÖK": ("FD/FAVÖK", 0.35),
-        "PD/NS": ("PD/NS", 0.20),
-    }
-    multiples = {
-        method: _robust_multiple(recent[column] if column in recent.columns else pd.Series(dtype=float))
-        for method, (column, _) in multiple_specs.items()
-    }
-
-    method_rows: list[dict[str, Any]] = []
-    raw_weights: dict[str, float] = {}
-    for method, (_, importance) in multiple_specs.items():
-        multiple = multiples[method]
-        base = projection.loc["Baz"]
-        low = projection.loc["Temkinli"]
-        high = projection.loc["İyimser"]
-        # Birkaç günlük/çeyreklik gözlemle üretilen çarpan hedefi yeni halka
-        # arzlarda yanıltıcı olur. En az dört geçerli gözlem bulunmayan yöntem
-        # hesaplamaya katılmaz.
-        valid = np.isfinite(multiple["base"]) and multiple["count"] >= 4
-        if method == "F/K":
-            valid = valid and float(base["Net Kâr"]) > 0
-            target = float(base["Net Kâr"] / shares * multiple["base"]) if valid else np.nan
-            target_low = float(low["Net Kâr"] / shares * multiple["low"]) if valid else np.nan
-            target_high = float(high["Net Kâr"] / shares * multiple["high"]) if valid else np.nan
-        elif method == "PD/DD":
-            valid = valid and float(base["Özkaynak"]) > 0
-            target = float(base["Özkaynak"] / shares * multiple["base"]) if valid else np.nan
-            target_low = float(low["Özkaynak"] / shares * multiple["low"]) if valid else np.nan
-            target_high = float(high["Özkaynak"] / shares * multiple["high"]) if valid else np.nan
-            if metadata["horizon_type"] == "12 aylık ileri değerleme":
-                importance *= 0.75
-        elif method == "FD/FAVÖK":
-            valid = valid and float(base["FAVÖK"]) > 0
-            target = float((base["FAVÖK"] * multiple["base"] - base["Net Borç"]) / shares) if valid else np.nan
-            target_low = float((low["FAVÖK"] * multiple["low"] - low["Net Borç"]) / shares) if valid else np.nan
-            target_high = float((high["FAVÖK"] * multiple["high"] - high["Net Borç"]) / shares) if valid else np.nan
-        else:
-            valid = valid and float(base["Satış Gelirleri"]) > 0
-            target = float(base["Satış Gelirleri"] / shares * multiple["base"]) if valid else np.nan
-            target_low = float(low["Satış Gelirleri"] / shares * multiple["low"]) if valid else np.nan
-            target_high = float(high["Satış Gelirleri"] / shares * multiple["high"]) if valid else np.nan
-
-        raw_weight = float(importance * multiple["stability"]) if valid else 0.0
-        raw_weights[method] = raw_weight
-        method_rows.append(
-            {
-                "Yöntem": method,
-                "Baz Çarpan": multiple["base"],
-                "Çarpan Alt": multiple["low"],
-                "Çarpan Üst": multiple["high"],
-                "Örnek Sayısı": int(multiple["count"]),
-                "Baz Hedef": target,
-                "Temkinli Hedef": min(target_low, target) if valid else np.nan,
-                "İyimser Hedef": max(target_high, target) if valid else np.nan,
-                "Ham Güven Ağırlığı": raw_weight,
-            }
-        )
-
-    weight_total = sum(raw_weights.values())
-    if weight_total <= 0:
-        raise InsufficientValuationDataError(
-            "En az dört gözleme sahip geçerli bir değerleme çarpanı bulunamadı."
-        )
-    methods = pd.DataFrame(method_rows).set_index("Yöntem")
-    methods["Güven Ağırlığı %"] = [raw_weights[name] / weight_total * 100 for name in methods.index]
-    methods = methods.drop(columns=["Ham Güven Ağırlığı"])
+    methods = _calculate_methods(
+        projection,
+        ratios,
+        shares=shares,
+        horizon_type=str(metadata["horizon_type"]),
+    )
     weights = methods["Güven Ağırlığı %"] / 100.0
     average_target = float((methods["Baz Hedef"] * weights).sum())
     scenario_low = float((methods["Temkinli Hedef"] * weights).sum())
@@ -417,30 +505,45 @@ def build_rule_based_valuation(
     driver_score = min(1.0, float(metadata["seasonality_samples"]) / 4.0)
     spread = (scenario_high - scenario_low) / max(abs(average_target), 1e-9)
     spread_score = 1.0 / (1.0 + max(0.0, spread))
-    # Nokta hedefi iyi besleyen çok sayıda gözlem, hedef aralığı aşırı
-    # genişse tek başına "yüksek güven" üretmemeli. Bu nedenle senaryo
-    # genişliği güven puanında en güçlü bileşendir.
+    validation = _historical_validation(quarterly, ratios)
+    # Güven puanının en güçlü bileşeni artık geçmiş yıl sonlarında üretilen
+    # hedeflerin sonradan gerçekleşen fiyatlara karşı hatasıdır. Backtest
+    # yoksa puan yüksek güven seviyesine çıkamaz.
     confidence_score = int(
         round(
             100
             * (
-                0.20 * sample_score
-                + 0.20 * history_score
-                + 0.15 * driver_score
-                + 0.45 * spread_score
+                0.15 * sample_score
+                + 0.15 * history_score
+                + 0.10 * driver_score
+                + 0.25 * spread_score
+                + 0.35 * validation["score"]
             )
         )
     )
+    if validation["count"] == 0:
+        confidence_score = min(confidence_score, 54)
     confidence_label = "Yüksek" if confidence_score >= 75 else "Orta" if confidence_score >= 55 else "Düşük"
     upside = float(relative_discount_pct(average_target, current_price))
+
+    valuation_timestamp = pd.Timestamp(valuation_date) if valuation_date is not None else pd.Timestamp(ratios.index[-1])
+    if valuation_timestamp.tzinfo is not None:
+        valuation_timestamp = valuation_timestamp.tz_localize(None)
+    target_date = pd.Timestamp(int(metadata["target_year"]), 12, 31)
+    horizon_days = int((target_date.normalize() - valuation_timestamp.normalize()).days)
+    if horizon_days <= 0:
+        raise InsufficientValuationDataError(
+            "Hedef değerleme tarihi geçmiş durumda; daha güncel finansal dönem gerekli."
+        )
+    horizon_years = max(horizon_days / 365.25, 1.0 / 12.0)
+    target_period_return = average_target / current_price - 1.0
     status = (
-        "iskontolu" if upside >= 20 else
-        "az değerli" if upside >= 10 else
-        "adil" if upside >= -10 else
-        "biraz yüksek" if upside >= -20 else
+        "iskontolu" if target_period_return >= 0.20 else
+        "az değerli" if target_period_return >= 0.10 else
+        "adil" if target_period_return >= -0.10 else
+        "biraz yüksek" if target_period_return >= -0.20 else
         "pahalı"
     )
-    target_date = pd.Timestamp(int(metadata["target_year"]), 12, 1)
     summary = pd.DataFrame(
         [{
             "Değerleme Ufku": metadata["horizon_type"],
@@ -452,6 +555,10 @@ def build_rule_based_valuation(
             "Temkinli Hedef": scenario_low,
             "İyimser Hedef": scenario_high,
             "Hedef Potansiyeli %": upside,
+            "Değerleme Vadesi (Yıl)": horizon_years,
+            "Hedef Dönem Getirisi %": target_period_return * 100,
+            "Backtest Örnek Sayısı": int(validation["count"]),
+            "Backtest Medyan Mutlak Hata %": validation["median_ape"] * 100,
             "Veri Güveni": confidence_label,
             "Güven Puanı": confidence_score,
             "Değerleme Görünümü": status,

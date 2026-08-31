@@ -56,6 +56,7 @@ class ApiValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("tufe_kullan", run_analysis.call_args.kwargs)
         self.assertNotIn("evds_api_key", run_analysis.call_args.kwargs)
+        self.assertNotIn("required_return_pct", run_analysis.call_args.kwargs)
 
 
 if __name__ == "__main__":
