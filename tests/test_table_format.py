@@ -37,6 +37,19 @@ class TableFormatTests(unittest.TestCase):
         self.assertNotIn("<script>", html)
         self.assertIn("&lt;script&gt;", html)
 
+    def test_named_index_is_rendered_in_the_single_header_row(self):
+        frame = pd.DataFrame(
+            {"F/K": [5.83], "PD/DD": [0.65]},
+            index=pd.Index(["ULKER"], name="Kod"),
+        )
+
+        html = dataframe_to_html(frame)
+        table_head = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        self.assertEqual(table_head.count("<tr"), 1)
+        self.assertIn("Kod", table_head)
+        self.assertIn("F/K", table_head)
+        self.assertIn("ULKER", html)
+
     def test_excel_uses_native_number_formats(self):
         import tempfile
         from pathlib import Path

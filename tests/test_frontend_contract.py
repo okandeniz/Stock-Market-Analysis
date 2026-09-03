@@ -3,6 +3,22 @@ from pathlib import Path
 
 
 class FrontendContractTests(unittest.TestCase):
+    def test_vertical_analysis_uses_a_single_sticky_header_row(self):
+        root = Path(__file__).resolve().parents[1]
+        stylesheet = (root / "static" / "app.css").read_text(encoding="utf-8")
+        company_analysis = (root / "app" / "analysis_company.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            ".data-table thead th {\n  position: sticky;\n  top: 0;",
+            stylesheet,
+        )
+        self.assertIn("classes=\"data-table vertical-analysis-table\"", company_analysis)
+
+        table_format = (root / "app" / "table_format.py").read_text(encoding="utf-8")
+        self.assertIn("flattened.reset_index()", table_format)
+
     def test_financial_change_sections_and_period_toggle_are_wired(self):
         root = Path(__file__).resolve().parents[1]
         javascript = (root / "static" / "app.js").read_text(encoding="utf-8")
@@ -111,6 +127,22 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('return "NaN"', javascript)
         self.assertIn("row.inverse ? numericChange <= 0 : numericChange >= 0", javascript)
 
+    def test_company_name_is_shown_as_an_optional_category_heading(self):
+        root = Path(__file__).resolve().parents[1]
+        javascript = (root / "static" / "app.js").read_text(encoding="utf-8")
+        stylesheet = (root / "static" / "app.css").read_text(encoding="utf-8")
+        company_analysis = (root / "app" / "analysis_company.py").read_text(
+            encoding="utf-8"
+        )
+        page = (root / "templates" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("renderCompanyCategoryHeading", javascript)
+        self.assertIn("meta?.sirket_adi", javascript)
+        self.assertIn("if (!companyName) return", javascript)
+        self.assertIn(".company-category-heading", stylesheet)
+        self.assertIn('"sirket_adi": _lookup_company_name', company_analysis)
+        self.assertIn("20260903-company-name", page)
+
     def test_vertical_balance_comparison_is_available_in_balance_category(self):
         root = Path(__file__).resolve().parents[1]
         page = (root / "templates" / "index.html").read_text(encoding="utf-8")
@@ -125,7 +157,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("_build_vertical_balance_analysis(df_bilanco)", company_analysis)
         self.assertIn("_build_vertical_income_analysis(df_bilanco)", company_analysis)
         self.assertIn('data-cat="dikey">Dikey Analiz</button>', page)
-        self.assertIn("20260831-compliance", page)
+        self.assertIn("20260903-company-name", page)
         self.assertIn('const isTableOnly = category === "dikey"', javascript)
         self.assertNotIn(".vertical-analysis-table td.change-positive", stylesheet)
 

@@ -199,10 +199,10 @@ const SECTOR_INFO_NOTES = {
     title: "Sektör finansal grafiklerini nasıl okumalıyım?",
     text: [
       "Yıllıklandırılmış fark ve trend grafikleri, seçilen TOPLAM/MEDIAN değerleme yönteminden bağımsız olarak şirketlerin yıllıklandırılmış gelir tablosu kalemlerinin toplamından hazırlanır.",
-      "Eksik açıklamanın sahte düşüş yaratmaması için her kalemde referans döneme ulaşmış sabit ve karşılaştırılabilir şirket evreni kullanılır. Kapsama girmeyen şirketler dönem bilgisiyle ayrıca listelenir.",
+      "Eksik açıklamanın sahte düşüş yaratmaması için her değişim iki komşu dönemde de verisi bulunan aynı şirketlerle hesaplanır. Dönemsel şirket sayısı imleç bilgisinde, kapsam dışı şirketler ise dönem bilgisiyle ayrıca gösterilir.",
       "Sektör marjları basit şirket marjı ortalaması değildir; sektör brüt kârı, faaliyet kârı, FAVÖK'ü ve net kârı sektör satış toplamına bölünerek hesaplanır.",
     ],
-    source: "Hesaplama yöntemi: sabit şirket evrenli yıllıklandırılmış sektör toplamı.",
+    source: "Hesaplama yöntemi: dönemsel eşleşen şirket evrenli yıllıklandırılmış sektör toplamı.",
   },
 };
 
@@ -471,7 +471,7 @@ function renderSectorCoverageNotice(container, coverage) {
   notice.appendChild(title);
 
   const reference = document.createElement("p");
-  reference.textContent = `${coverage.reference_period || "—"} referans dönemli grafikler, ${coverage.reference_count || 0}/${coverage.successful_count || 0} karşılaştırılabilir şirketin sabit evreninden oluşturuldu.`;
+  reference.textContent = `${coverage.reference_period || "—"} referans dönemine ulaşan ${coverage.reference_count || 0}/${coverage.successful_count || 0} şirket esas alındı. Geçmişteki her değişim, iki komşu dönemde de verisi bulunan aynı şirketler karşılaştırılarak hesaplandı; dönem kapsamı imleç bilgisinde gösterilir.`;
   notice.appendChild(reference);
 
   if (coverage.observed_latest_period && coverage.observed_latest_period !== coverage.reference_period) {
@@ -1364,6 +1364,7 @@ function renderCompany() {
   document.querySelector(".company-sidebar .sidebar-toggle")?.classList.toggle("hidden", isSummary || isTableOnly);
 
   if (valuationRequiresDisclosure) {
+    renderCompanyCategoryHeading(content, data.meta);
     renderValuationDisclosurePlaceholder(content);
     requestAnimationFrame(showValuationDisclosure);
     return;
@@ -1396,6 +1397,28 @@ function renderCompany() {
   }
 
   prependInfoNotes(content, companyInfoNotesFor(category), { prepend: !isSummary });
+  renderCompanyCategoryHeading(content, data.meta);
+}
+
+function renderCompanyCategoryHeading(container, meta) {
+  const companyName = typeof meta?.sirket_adi === "string" ? meta.sirket_adi.trim() : "";
+  if (!companyName) return;
+
+  const heading = document.createElement("header");
+  heading.className = "company-category-heading";
+
+  const title = document.createElement("h2");
+  title.textContent = companyName;
+  heading.appendChild(title);
+
+  const symbol = typeof meta?.hisse === "string" ? meta.hisse.trim().toUpperCase() : "";
+  if (symbol) {
+    const code = document.createElement("span");
+    code.textContent = symbol;
+    heading.appendChild(code);
+  }
+
+  container.insertBefore(heading, container.firstChild);
 }
 
 function initValuationDisclosure() {

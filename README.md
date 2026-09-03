@@ -49,7 +49,7 @@ Seçilen sektördeki tüm şirketler için tek bir karşılaştırma tablosu ve 
 
 Veri çekimi, sektördeki şirketler için kontrollü biçimde paralel yapılır. Tek bir şirketin dört dönemlik mali tablo paketleri de eşzamanlı indirilir; süreç genelindeki bağlantı sınırı veri kaynağının aşırı yüklenmesini önler.
 
-Sektör finansal grafiklerinde eksik açıklamanın sahte düşüş üretmemesi için şirketlerin çoğunluğunun ulaştığı en güncel referans dönem belirlenir ve her kalemde bu döneme ulaşmış sabit şirket evreni kullanılır. En güncel dönemi henüz açıklamayan şirketler son mali dönemleriyle birlikte kullanıcıya gösterilir; veri kaynağı hataları bu listeden ayrı raporlanır.
+Sektör finansal grafiklerinde eksik açıklamanın sahte düşüş üretmemesi için şirketlerin çoğunluğunun ulaştığı en güncel referans dönem belirlenir. Geçmişteki her dönem farkı, iki komşu dönemde de verisi bulunan aynı şirketler üzerinden hesaplanır; böylece yeni eklenen veya eski verisi bulunmayan bir şirket sektör değişimi gibi görünmez ve erişilebilir geçmiş dönemler korunur. Grafiklerin imleç bilgisinde dönemsel karşılaştırılabilir şirket sayısı gösterilir. En güncel dönemi henüz açıklamayan şirketler son mali dönemleriyle birlikte kullanıcıya gösterilir; veri kaynağı hataları bu listeden ayrı raporlanır.
 
 ### Şirket Analizi
 

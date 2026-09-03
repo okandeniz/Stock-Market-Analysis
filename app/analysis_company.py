@@ -335,7 +335,7 @@ def _build_vertical_income_analysis(raw_financials: pd.DataFrame) -> pd.DataFram
 
 
 def _vertical_analysis_to_html(df: pd.DataFrame, *, missing_message: str) -> str:
-    """Render vertical analysis without directional colour assumptions."""
+    """Render vertical analysis with one sticky-compatible header row."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return dataframe_to_html(
             pd.DataFrame(
@@ -345,7 +345,10 @@ def _vertical_analysis_to_html(df: pd.DataFrame, *, missing_message: str) -> str
             ),
             index=False,
         )
-    return dataframe_to_html(df)
+    return dataframe_to_html(
+        df,
+        classes="data-table vertical-analysis-table",
+    )
 
 
 def _plot_rule_based_valuation(mod: Any, result: ValuationResult) -> None:
@@ -719,6 +722,42 @@ def company_options() -> dict[str, Any]:
     return {
         "degerleme": ["EVET", "HAYIR"],
     }
+
+
+def _lookup_company_name(project_root: Path, symbol: str) -> str | None:
+    """Return the optional company name from ``temel_ozet.xlsx``.
+
+    The workbook is supporting presentation data. A missing file, unexpected
+    schema or unmatched symbol must never stop the financial analysis.
+    """
+    try:
+        overview = pd.read_excel(project_root / "temel_ozet.xlsx")
+        normalized_columns = {
+            str(column).strip().casefold(): column for column in overview.columns
+        }
+        code_column = normalized_columns.get("kod")
+        name_column = next(
+            (
+                normalized_columns.get(candidate)
+                for candidate in ("hisse adı", "şirket adı", "sirket adi")
+                if normalized_columns.get(candidate) is not None
+            ),
+            None,
+        )
+        if code_column is None or name_column is None:
+            return None
+
+        codes = overview[code_column].astype("string").str.strip().str.upper()
+        matches = overview.loc[codes.eq(str(symbol).strip().upper()).fillna(False)]
+        if matches.empty:
+            return None
+        value = matches.iloc[0][name_column]
+        if pd.isna(value):
+            return None
+        company_name = str(value).strip()
+        return company_name or None
+    except Exception:  # Optional heading metadata must fail open.
+        return None
 
 
 def run_company_analysis(
@@ -1170,6 +1209,7 @@ def run_company_analysis(
         charts=charts,
         meta={
             "hisse": hisse,
+            "sirket_adi": _lookup_company_name(project_root, hisse),
             "degerleme": degerleme,
             "degerleme_uyarisi": valuation_warning,
             "rows": int(len(df)),

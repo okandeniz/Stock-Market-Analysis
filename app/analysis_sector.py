@@ -142,10 +142,11 @@ def _build_sector_financial_history(
     """Create comparable sector totals without mixing stale reporting periods.
 
     The reference quarter is the newest quarter reached by at least 70% of the
-    successfully analysed companies.  Every plotted metric then uses a fixed
-    cohort that has reported that reference quarter.  A period is plotted only
-    when the complete metric cohort has data, so a missing company cannot look
-    like a fall in sector revenue/profit.
+    successfully analysed companies. Every plotted metric uses companies that
+    reported that reference quarter. Historical changes are calculated with a
+    pairwise-comparable cohort for each adjacent period. This retains the full
+    available history without making a newly available/missing company look
+    like a rise or fall in the sector.
     """
     normalized_histories: dict[str, pd.DataFrame] = {}
     normalized_latest: dict[str, pd.Timestamp] = {}
@@ -190,7 +191,11 @@ def _build_sector_financial_history(
         return None
 
     totals = pd.DataFrame(dtype=float)
+    differences = pd.DataFrame(dtype=float)
+    trend = pd.DataFrame(dtype=float)
     metric_coverage: dict[str, int] = {}
+    metric_period_coverage: dict[str, dict[str, int]] = {}
+    metric_change_coverage: dict[str, dict[str, int]] = {}
     for column in _SECTOR_FLOW_COLS:
         eligible = [
             symbol
@@ -207,26 +212,61 @@ def _build_sector_financial_history(
             },
             axis=1,
         ).sort_index()
-        # Fixed company universe per metric: incomplete periods are not summed.
-        complete = matrix.notna().all(axis=1)
-        total = matrix.loc[complete].sum(axis=1, min_count=len(eligible))
+        available_count = matrix.notna().sum(axis=1)
+        total = matrix.sum(axis=1, min_count=1).where(available_count.gt(0))
         totals[column] = total
         metric_coverage[column] = len(eligible)
+
+        label = _SECTOR_FLOW_LABELS.get(column, column)
+        metric_period_coverage[label] = {
+            _period_label(period): int(count)
+            for period, count in available_count.items()
+            if int(count) > 0
+        }
+
+        comparable_change = pd.Series(np.nan, index=matrix.index, dtype=float)
+        chained_trend = pd.Series(np.nan, index=matrix.index, dtype=float)
+        change_counts: dict[str, int] = {}
+        populated_periods = list(matrix.index[available_count.gt(0)])
+        if populated_periods:
+            chained_trend.loc[populated_periods[0]] = 100.0
+        for previous_period, current_period in zip(
+            populated_periods, populated_periods[1:]
+        ):
+            comparable = (
+                matrix.loc[[previous_period, current_period]].notna().all(axis=0)
+            )
+            comparable_symbols = list(matrix.columns[comparable])
+            if not comparable_symbols:
+                continue
+            previous_total = float(
+                matrix.loc[previous_period, comparable_symbols].sum()
+            )
+            current_total = float(
+                matrix.loc[current_period, comparable_symbols].sum()
+            )
+            comparable_change.loc[current_period] = current_total - previous_total
+            change_counts[_period_label(current_period)] = len(comparable_symbols)
+
+            previous_index = chained_trend.loc[previous_period]
+            if np.isfinite(previous_index) and previous_total != 0:
+                chained_trend.loc[current_period] = (
+                    float(previous_index) * current_total / previous_total
+                )
+
+        differences[column] = comparable_change
+        trend[column] = chained_trend
+        metric_change_coverage[label] = change_counts
 
     totals = totals.sort_index().dropna(how="all")
     if totals.empty:
         return None
-
-    differences = totals.diff().dropna(how="all")
-    trend = pd.DataFrame(index=totals.index, dtype=float)
-    for column in totals.columns:
-        series = totals[column].dropna()
-        base_value = next((float(value) for value in series if value != 0), np.nan)
-        if np.isfinite(base_value):
-            trend[column] = totals[column] / base_value * 100.0
+    differences = differences.sort_index().dropna(how="all")
+    trend = trend.sort_index().dropna(how="all")
 
     margins = pd.DataFrame(dtype=float)
     margin_coverage: dict[str, int] = {}
+    margin_period_coverage: dict[str, dict[str, int]] = {}
     for label, numerator in _SECTOR_MARGIN_SPECS.items():
         eligible = [
             symbol
@@ -247,11 +287,17 @@ def _build_sector_financial_history(
         shared_index = numerator_matrix.index.union(sales_matrix.index).sort_values()
         numerator_matrix = numerator_matrix.reindex(shared_index)
         sales_matrix = sales_matrix.reindex(shared_index)
-        complete = numerator_matrix.notna().all(axis=1) & sales_matrix.notna().all(axis=1)
-        numerator_total = numerator_matrix.loc[complete].sum(axis=1, min_count=len(eligible))
-        sales_total = sales_matrix.loc[complete].sum(axis=1, min_count=len(eligible))
+        comparable = numerator_matrix.notna() & sales_matrix.notna()
+        period_count = comparable.sum(axis=1)
+        numerator_total = numerator_matrix.where(comparable).sum(axis=1, min_count=1)
+        sales_total = sales_matrix.where(comparable).sum(axis=1, min_count=1)
         margins[label] = numerator_total / sales_total.replace(0, np.nan) * 100.0
         margin_coverage[label] = len(eligible)
+        margin_period_coverage[label] = {
+            _period_label(period): int(count)
+            for period, count in period_count.items()
+            if int(count) > 0
+        }
     margins = margins.replace([np.inf, -np.inf], np.nan).dropna(how="all")
 
     observed_missing = {
@@ -287,8 +333,11 @@ def _build_sector_financial_history(
                 _SECTOR_FLOW_LABELS.get(column, column): count
                 for column, count in metric_coverage.items()
             },
+            "metric_period_coverage": metric_period_coverage,
+            "metric_change_coverage": metric_change_coverage,
             "margin_coverage": margin_coverage,
-            "method": "Sabit şirket evrenli yıllıklandırılmış sektör toplamı",
+            "margin_period_coverage": margin_period_coverage,
+            "method": "Dönemsel eşleşen şirket evrenli yıllıklandırılmış sektör toplamı",
         },
     }
 
@@ -430,16 +479,22 @@ def _plot_sector_annualized_changes(
         subplot_titles=[_SECTOR_FLOW_LABELS[column].upper() for column in columns],
     )
     metric_coverage = coverage.get("metric_coverage", {})
+    change_coverage = coverage.get("metric_change_coverage", {})
     for index, column in enumerate(columns):
         row, col = divmod(index, ncols)
         series = pd.to_numeric(differences[column], errors="coerce").dropna()
         if series.empty:
             continue
         label = _SECTOR_FLOW_LABELS[column]
-        company_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        period_counts = change_coverage.get(label, {})
+        fallback_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        company_counts = [
+            period_counts.get(_period_label(period), fallback_count)
+            for period in series.index
+        ]
         hover = [
             f"Değişim: {format_tr_number(value)}<br>Karşılaştırılabilir şirket: {company_count}"
-            for value in series
+            for value, company_count in zip(series, company_counts)
         ]
         fig.add_trace(
             go.Waterfall(
@@ -462,7 +517,7 @@ def _plot_sector_annualized_changes(
         fig.update_xaxes(tickangle=45, automargin=True, row=row + 1, col=col + 1)
     title = (
         "Sektör Gelir Tablosu Değişim Analizi — Yıllıklandırılmış"
-        f" | Kapsam: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
+        f" | Referans kapsamı: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
     )
     apply_theme(fig, height=340 * nrows, title=title)
     style_subplot_titles(fig)
@@ -484,20 +539,36 @@ def _plot_sector_trend_index(
         subplot_titles=[_SECTOR_FLOW_LABELS[column].upper() for column in columns],
     )
     metric_coverage = coverage.get("metric_coverage", {})
+    period_coverage = coverage.get("metric_period_coverage", {})
+    change_coverage = coverage.get("metric_change_coverage", {})
     for index, column in enumerate(columns):
         row, col = divmod(index, ncols)
         series = pd.to_numeric(trend[column], errors="coerce").dropna()
         if series.empty:
             continue
         label = _SECTOR_FLOW_LABELS[column]
-        company_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        period_counts = period_coverage.get(label, {})
+        fallback_count = metric_coverage.get(label, coverage.get("reference_count", 0))
+        change_counts = change_coverage.get(label, {})
+        company_counts = []
+        for position, period in enumerate(series.index):
+            period_label = _period_label(period)
+            if position == 0:
+                company_counts.append(period_counts.get(period_label, fallback_count))
+            else:
+                company_counts.append(
+                    change_counts.get(
+                        period_label,
+                        period_counts.get(period_label, fallback_count),
+                    )
+                )
         fig.add_trace(
             go.Scatter(
                 x=format_period_labels(series.index),
                 y=series.values.tolist(),
                 mode="lines+markers",
                 line={"color": TREND_COLORWAY[index % len(TREND_COLORWAY)]},
-                customdata=[company_count] * len(series),
+                customdata=company_counts,
                 hovertemplate=(
                     "%{x}<br>Endeks: %{y:.1f}<br>Karşılaştırılabilir şirket: %{customdata}"
                     "<extra>" + label + "</extra>"
@@ -529,6 +600,7 @@ def _plot_sector_margins(
     nrows = int(np.ceil(len(columns) / ncols))
     fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[c.upper() for c in columns])
     margin_coverage = coverage.get("margin_coverage", {})
+    period_coverage = coverage.get("margin_period_coverage", {})
     for index, column in enumerate(columns):
         row, col = divmod(index, ncols)
         series = pd.to_numeric(margins[column], errors="coerce").dropna()
@@ -540,7 +612,13 @@ def _plot_sector_margins(
                 y=series.values.tolist(),
                 mode="lines+markers",
                 line={"color": TREND_COLORWAY[index % len(TREND_COLORWAY)]},
-                customdata=[margin_coverage.get(column, coverage.get("reference_count", 0))] * len(series),
+                customdata=[
+                    period_coverage.get(column, {}).get(
+                        _period_label(period),
+                        margin_coverage.get(column, coverage.get("reference_count", 0)),
+                    )
+                    for period in series.index
+                ],
                 hovertemplate=(
                     "%{x}<br>Marj: %{y:.2f}%<br>Karşılaştırılabilir şirket: %{customdata}"
                     "<extra>" + column + "</extra>"
@@ -555,7 +633,7 @@ def _plot_sector_margins(
         fig.update_yaxes(ticksuffix="%", row=row + 1, col=col + 1)
     title = (
         "Sektör Kârlılık Marjları — Yıllıklandırılmış Toplamlar"
-        f" | Kapsam: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
+        f" | Referans kapsamı: {coverage.get('reference_count', 0)}/{coverage.get('successful_count', 0)} şirket"
     )
     apply_theme(fig, height=310 * nrows, title=title)
     style_subplot_titles(fig)

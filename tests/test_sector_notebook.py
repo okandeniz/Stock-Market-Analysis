@@ -157,6 +157,53 @@ class SectorNotebookTests(unittest.TestCase):
         )
         self.assertEqual(coverage["margin_coverage"]["FAVÖK Marjı %"], 2)
 
+    def test_sector_history_keeps_older_periods_with_pairwise_comparable_companies(self):
+        dates = pd.date_range("2024-03-01", "2026-06-01", freq="QS-MAR")
+        aaa_sales = pd.Series(np.arange(100.0, 100.0 + len(dates) * 10.0, 10.0), index=dates)
+        bbb_sales = pd.Series([1_000.0, 1_100.0], index=dates[-2:])
+
+        def frame(sales):
+            return pd.DataFrame(
+                {
+                    "Satış Gelirleri": sales,
+                    "BRÜT KAR (ZARAR)": sales * 0.40,
+                    "Net Faaliyet Kar/Zararı": sales * 0.20,
+                    "FAVÖK": sales * 0.25,
+                    "Ana Ortaklık Payları": sales * 0.12,
+                }
+            )
+
+        bundle = _build_sector_financial_history(
+            {"AAA": frame(aaa_sales), "BBB": frame(bbb_sales)},
+            {"AAA": dates[-1], "BBB": dates[-1]},
+            requested_symbols=["AAA", "BBB"],
+        )
+
+        self.assertIsNotNone(bundle)
+        self.assertEqual(len(bundle["totals"]["Satış Gelirleri"].dropna()), len(dates))
+        self.assertEqual(len(bundle["differences"]["Satış Gelirleri"].dropna()), len(dates) - 1)
+
+        # BBB'nin ilk göründüğü dönemdeki yüksek tutarı sektör artışı gibi
+        # yazma; değişimi yalnız iki dönemde de bulunan AAA üzerinden hesapla.
+        bbb_first_period = dates[-2]
+        expected_aaa_change = aaa_sales.loc[bbb_first_period] - aaa_sales.loc[dates[-3]]
+        self.assertAlmostEqual(
+            bundle["differences"].loc[bbb_first_period, "Satış Gelirleri"],
+            expected_aaa_change,
+        )
+        self.assertEqual(
+            bundle["coverage"]["metric_change_coverage"]["Satış Gelirleri"][
+                "2026/3"
+            ],
+            1,
+        )
+        self.assertEqual(
+            bundle["coverage"]["metric_change_coverage"]["Satış Gelirleri"][
+                "2026/6"
+            ],
+            2,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

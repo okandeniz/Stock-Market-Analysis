@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 import pandas as pd
 
@@ -6,6 +8,7 @@ from app.analysis_company import (
     _build_company_summary,
     _build_vertical_balance_analysis,
     _build_vertical_income_analysis,
+    _lookup_company_name,
     _plot_rule_based_valuation,
     _valuation_kpi_summary,
     _vertical_analysis_to_html,
@@ -14,6 +17,24 @@ from app.valuation import ValuationResult
 
 
 class CompanyAnalysisHelperTests(unittest.TestCase):
+    def test_company_name_lookup_is_optional_and_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pd.DataFrame(
+                {
+                    "Kod": ["THYAO", "ASELS"],
+                    "Hisse Adı": ["Türk Hava Yolları A.O.", "ASELSAN"],
+                }
+            ).to_excel(root / "temel_ozet.xlsx", index=False)
+
+            self.assertEqual(
+                _lookup_company_name(root, "thyao"),
+                "Türk Hava Yolları A.O.",
+            )
+            self.assertIsNone(_lookup_company_name(root, "BULUNAMADI"))
+
+        self.assertIsNone(_lookup_company_name(Path(directory), "THYAO"))
+
     def test_vertical_balance_analysis_compares_same_quarter_yoy(self):
         index = pd.to_datetime(
             ["2025-03-01", "2025-06-01", "2025-09-01", "2025-12-01", "2026-03-01"]
@@ -60,6 +81,11 @@ class CompanyAnalysisHelperTests(unittest.TestCase):
         self.assertNotIn("change-positive", html)
         self.assertNotIn("change-negative", html)
         self.assertIn("150,00", html)
+        self.assertIn("vertical-analysis-table", html)
+        table_head = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        self.assertEqual(table_head.count("<tr"), 1)
+        self.assertIn("Kalem", table_head)
+        self.assertIn("2025/3 Tutar", table_head)
 
     def test_vertical_balance_analysis_requires_same_quarter_prior_year(self):
         raw = pd.DataFrame(

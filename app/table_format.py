@@ -103,9 +103,42 @@ def dataframe_to_html(
     index: bool = True,
     classes: str = "data-table",
 ) -> str:
-    """Render a DataFrame using Turkish separators and escaped HTML text."""
-    return format_dataframe_for_display(df).to_html(
-        index=index,
+    """Render a DataFrame with one header row and Turkish display formats.
+
+    ``DataFrame.to_html`` places a named index (for example ``Kod`` or
+    ``Kalem``) in a second ``thead`` row. Separate sticky rows overlap while
+    scrolling, so HTML tables expose index levels as ordinary first columns.
+    """
+    formatted = format_dataframe_for_display(df)
+    html_index = index
+    if index:
+        index_level_count = formatted.index.nlevels
+        original_names = list(formatted.index.names)
+        reserved = {str(column) for column in formatted.columns}
+        temporary_names: list[str] = []
+        for level in range(index_level_count):
+            candidate = f"__html_index_{level}__"
+            while candidate in reserved:
+                candidate = f"_{candidate}"
+            temporary_names.append(candidate)
+            reserved.add(candidate)
+
+        flattened = formatted.copy()
+        flattened.index = flattened.index.set_names(temporary_names)
+        formatted = flattened.reset_index()
+        columns = list(formatted.columns)
+        for level, original_name in enumerate(original_names):
+            if original_name is not None:
+                columns[level] = str(original_name)
+            elif index_level_count == 1 and isinstance(df.index, pd.DatetimeIndex):
+                columns[level] = "Dönem"
+            else:
+                columns[level] = ""
+        formatted.columns = columns
+        html_index = False
+
+    return formatted.to_html(
+        index=html_index,
         escape=True,
         border=0,
         classes=classes,
